@@ -1,0 +1,26 @@
+# R specific files
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+*.Rproj
+.RDataTmp*
+
+# Data files
+data/*.xpt
+data/*.csv
+data/*.RData
+
+*.csv
+*.xpt
+*.RData
+
+# Temporary files
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+*.ipynb_checkpoints

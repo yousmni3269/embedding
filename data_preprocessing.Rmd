@@ -1,0 +1,186 @@
+---
+output: html_document
+---
+
+## Data Preprocessing 
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(foreign)
+library(haven)
+```
+
+### Data importing from NHANES: https://wwwn.cdc.gov/nchs/nhanes/search/datapage.aspx?Component=Examination&
+
+```{r data_import}
+# Import data from NHANES for 2003-2004
+bmx_d1 = read_xpt("data/BMX_C.xpt") |>
+  janitor::clean_names() |>
+  drop_na(bmxbmi) |>
+  select(seqn, bmxbmi)
+
+demo_d1 = read_xpt("data/DEMO_C.xpt") |>
+  janitor::clean_names() |>
+  filter(ridageyr >= 20 & ridageyr < 85 & dmdmartl != 77 & dmdmartl != 99 & ridexprg %in% c(2,3,NA) & dmdeduc2 != 7 & dmdeduc2 != 9) |>
+  select(seqn, riagendr, ridageyr, ridreth1, dmdeduc2, dmdmartl, indfmpir) |>
+  drop_na()
+
+paxraw_d1 = read_xpt("data/paxraw_c.xpt") |>
+  janitor::clean_names() |>
+  filter(paxstat == 1 & paxcal == 1) |>  
+  drop_na(paxinten) |>
+  select(seqn, paxn, paxinten)
+
+
+# Import data from NHANES for 2005-2006 
+bmx_d2 = read_xpt("data/BMX_D.xpt") |>
+  janitor::clean_names() |>
+  drop_na(bmxbmi) |>
+  select(seqn, bmxbmi)
+
+demo_d2 = read_xpt("data/DEMO_D.xpt") |>
+  janitor::clean_names() |>
+  filter(ridageyr >= 20 & ridageyr < 85 & dmdmartl != 77 & dmdmartl != 99 & ridexprg %in% c(2,3,NA) & dmdeduc2 != 7 & dmdeduc2 != 9) |>
+  select(seqn, riagendr, ridageyr, ridreth1, dmdeduc2, dmdmartl, indfmpir) |>
+  drop_na()
+
+paxraw_d2 = read_xpt("data/paxraw_d.xpt", col_select = c("SEQN", "PAXN", "PAXINTEN", "PAXSTAT", "PAXCAL")) |> # only select required columns due to memory limit issue
+  janitor::clean_names() |>
+  filter(paxstat == 1 & paxcal == 1) |>  
+  drop_na(paxinten) |>
+  select(seqn, paxn, paxinten)
+```
+
+
+### cleaning into 5 minute interval data 
+
+```{r cleaning as EntroLLM}
+# Remove missing values and average the physical activity data over 5-minute intervals for each subject
+missing1 = paxraw_d1 |>
+  group_by(seqn) |> 
+  summarize(n = n()) |>
+  filter(n != 24*60*7)
+
+data1 = paxraw_d1 |>
+  mutate(min5 = floor((paxn - 1) / 5) + 1) |> # min5 interval added ranging from 1 to 2016
+  group_by(seqn, min5) |> 
+  summarise(intensity = mean(paxinten)) |> 
+  anti_join(missing1, by = "seqn") |>
+  inner_join(bmx_d1, by = "seqn") |>
+  inner_join(demo_d1, by = "seqn") # 3486 subjects 
+
+data1 |>
+  group_by(seqn) |>
+  summarize()
+
+
+missing2 = paxraw_d2 |>
+  group_by(seqn) |> 
+  summarize(n = n()) |>
+  filter(n != 24*60*7)
+
+data2 = paxraw_d2 |>
+  mutate(min5 = floor((paxn - 1) / 5) + 1) |> # min5 interval added ranging from 1 to 2016
+  group_by(seqn, min5) |> 
+  summarise(intensity = mean(paxinten)) |> 
+  anti_join(missing2, by = "seqn") |>
+  inner_join(bmx_d2, by="seqn") |>
+  inner_join(demo_d2, by="seqn") # 3457 subjects
+
+data2 |>
+  group_by(seqn) |>
+  summarize()
+
+data_total = rbind(data1,data2) |>
+  rename(time = min5, 
+         gender = riagendr, 
+         age = ridageyr, 
+         race = ridreth1, 
+         education = dmdeduc2, 
+         marital_status = dmdmartl, 
+         pir = indfmpir) |>
+  dplyr::select(seqn, bmxbmi, time, gender, age, race, education, marital_status, pir, intensity) # 6943 subjects 
+
+data_total |>
+  group_by(seqn) |>
+  summarize()
+```
+
+Variables: 
+1) BMI = 0: < 25, 1: >= 25 
+2) gender = 1: male, 2: female 
+3) race = 1: Mexican America, 2: Other Hispanic, 3: Non-Hispanic White, 4: Non-Hispanic Black, 5: Other
+4) education = 1: less than 9th grade, 2: 9-11th grade (includes 12th grade and no diploma), 3: high school grad/GED or equivalent, 4: some college or associates (AA) degree, 5: college graduate or higher 
+5) marital_status = 1: married, 2: widowed, 3: divorced, 4: separated, 5: never married, 6: living with partner 
+6) PA (physical activity) = 0: intensity < 100 counts/min (sedentary), 1: 100 <= intensity < 760 counts/min (light), 2: 760 <= intensity < 2200 counts/min (lifestyle), 3: 2200 <= intensity < 6000 counts/min (moderate), 4: intensity >= 6000 counts/min (vigorous)
+
+```{r}
+data_wide = data_total |> 
+  mutate(
+    bmi = ifelse(bmxbmi >= 25, 1, 0),
+    pa = ifelse(intensity < 100, 0,
+                ifelse(intensity < 760, 1,
+                       ifelse(intensity < 2200, 2,
+                              ifelse(intensity < 6000, 3, 4))))) |>
+  select(-bmxbmi, -intensity) |>
+  pivot_wider(
+    names_from = time, 
+    values_from = pa, 
+    names_prefix = "time")
+
+save(data_wide, file = "data/data_wide.RData")
+write.csv(data_wide, file = "data/data_wide.csv")       
+```
+
+
+
+### 20 minute interval data 
+
+```{r}
+data120 = paxraw_d1 |>
+  mutate(min20 = floor((paxn - 1) / 20) + 1) |> # min20 interval added ranging from 1 to 2016
+  group_by(seqn, min20) |> 
+  summarise(intensity = mean(paxinten)) |> 
+  anti_join(missing1, by = "seqn") |>
+  inner_join(bmx_d1, by = "seqn") |>
+  inner_join(demo_d1, by = "seqn") # 3486 subjects 
+
+data220 = paxraw_d2 |>
+  mutate(min20 = floor((paxn - 1) / 20) + 1) |> # min20 interval added ranging from 1 to 2016
+  group_by(seqn, min20) |> 
+  summarise(intensity = mean(paxinten)) |> 
+  anti_join(missing2, by = "seqn") |>
+  inner_join(bmx_d2, by="seqn") |>
+  inner_join(demo_d2, by="seqn") # 3457 subjects
+
+data_total_20 = rbind(data120,data220) |>
+  rename(time = min20, 
+         gender = riagendr, 
+         age = ridageyr, 
+         race = ridreth1, 
+         education = dmdeduc2, 
+         marital_status = dmdmartl, 
+         pir = indfmpir) |>
+  dplyr::select(seqn, bmxbmi, time, gender, age, race, education, marital_status, pir, intensity) # 6943 subjects 
+
+data_total_20 |>
+  group_by(seqn) |>
+  summarize()
+
+data_wide_20 = data_total |> 
+  mutate(
+    bmi = ifelse(bmxbmi >= 25, 1, 0),
+    pa = ifelse(intensity < 100, 0,
+                ifelse(intensity < 760, 1,
+                       ifelse(intensity < 2200, 2,
+                              ifelse(intensity < 6000, 3, 4))))) |>
+  select(-bmxbmi, -intensity) |>
+  pivot_wider(
+    names_from = time, 
+    values_from = pa, 
+    names_prefix = "time")
+
+save(data_wide_20, file = "data/data_wide_20.RData")
+write.csv(data_wide_20, file = "data/data_wide_20.csv")    
+```
+
