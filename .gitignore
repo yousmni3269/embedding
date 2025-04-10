@@ -11,6 +11,7 @@
 data/*.xpt
 data/*.csv
 data/*.RData
+data2/*.csv
 
 *.csv
 *.xpt
