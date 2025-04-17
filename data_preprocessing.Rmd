@@ -97,9 +97,9 @@ data_total = rbind(data1,data2) |>
          age = ridageyr, 
          race = ridreth1, 
          education = dmdeduc2, 
-         marital_status = dmdmartl, 
+         married = dmdmartl, 
          pir = indfmpir) |>
-  dplyr::select(seqn, bmxbmi, time, gender, age, race, education, marital_status, pir, intensity) # 6943 subjects 
+  dplyr::select(seqn, bmxbmi, time, gender, age, race, education, married, pir, intensity) # 6943 subjects 
 
 data_total |>
   group_by(seqn) |>
@@ -159,15 +159,12 @@ data_total_20 = rbind(data120,data220) |>
          age = ridageyr, 
          race = ridreth1, 
          education = dmdeduc2, 
-         marital_status = dmdmartl, 
+         married = dmdmartl, 
          pir = indfmpir) |>
-  dplyr::select(seqn, bmxbmi, time, gender, age, race, education, marital_status, pir, intensity) # 6943 subjects 
+  dplyr::select(seqn, bmxbmi, time, gender, age, race, education, married, pir, intensity) # 6943 subjects 
 
-data_total_20 |>
-  group_by(seqn) |>
-  summarize()
 
-data_wide_20 = data_total |> 
+data_wide_20 = data_total_20 |> 
   mutate(
     bmi = ifelse(bmxbmi >= 25, 1, 0),
     pa = ifelse(intensity < 100, 0,

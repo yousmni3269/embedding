@@ -1,0 +1,517 @@
+---
+output: html_document
+---
+
+# Embedding Evaluating 
+
+```{r setup, include=FALSE}
+library(glmnet)
+library(dplyr)
+library(lme4)
+library(tidyr)
+library(pROC)
+library(tidyverse)
+library(patchwork)
+library(caret)
+library(tidymodels)
+```
+
+
+```{r}
+# initial data
+data_wide = read_csv("./data/data_wide.csv") |>
+  mutate(gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education), 
+         married = as.character(married)) |>
+  dplyr::select(-1)
+
+# dataset with only demographic variables
+data_demo_only = data_wide |>
+  select(seqn, gender, age, race, education, married, pir, bmi) 
+```
+
+
+## Get embedding data  
+
+```{r import embeddings}
+# GPT with 1536 embedding dimension
+data_gpt1536 = read.csv("./data2/data_wide_embedding_gpt1536.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-combined,-x)
+
+data_gpt1536$embedding = gsub("\\[", "", data_gpt1536$embedding)
+data_gpt1536$embedding = gsub("\\]", "", data_gpt1536$embedding)
+
+data_gpt1536 = data_gpt1536 |>
+  separate(embedding, into = paste0("var", 1:1536), sep = ",\\s*", convert = TRUE) |>
+  slice(seq(1, n(), by = 2)) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education),
+         married = as.character(married))
+
+
+# GPT with 50 embedding dimension
+data_gpt50 = read.csv("./data2/data_wide_embedding_gpt50.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married)) 
+
+
+# BERT with 768 embedding dimension
+data_bert768 = read.csv("./data2/data_wide_embedding_bert768.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined)
+
+data_bert768$embedding <- gsub("\\[", "", data_bert768$embedding)
+data_bert768$embedding <- gsub("\\]", "", data_bert768$embedding)
+data_bert768$embedding <- gsub("\n", " ", data_bert768$embedding)
+
+data_bert768 = data_bert768 |>
+  mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
+         embedding = str_replace_all(embedding, "\\s+", " ")) |> # Replace multiple spaces with a single space 
+  separate(embedding, into = paste0("var", 1:768), sep = "\\s+", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education), 
+         married = as.character(married)) 
+
+
+# BERT with 50 embedding dimension
+data_bert50 = read.csv("./data2/data_wide_embedding_bert50.csv") %>% 
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married))
+
+
+# Cohere with 1024 embedding dimension
+data_cohere1024 = read.csv("./data2/data_wide_embedding_cohere1024.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-n_tokens)
+
+data_cohere1024$embedding = gsub("\\[", "", data_cohere1024$embedding) 
+data_cohere1024$embedding = gsub("\\]", "", data_cohere1024$embedding)
+data_cohere1024$embedding = gsub(",", " ", data_cohere1024$embedding)
+
+data_cohere1024 = data_cohere1024 |> 
+  mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
+         embedding = str_replace_all(embedding, "\\s+", " ")) |> # Replace multiple spaces with a single space
+  separate(embedding, into = paste0("var", 1:1024), sep = "\\s+", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+        race = as.character(race), 
+        education = as.character(education), 
+        married = as.character(married))
+  
+
+# Cohere with 50 embedding dimension
+data_cohere50 = read.csv("./data2/data_wide_embedding_cohere50.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married))
+
+
+# MOMENT with 1024 embedding dimension 
+data_moment1024 = read.csv("./data/embeddings_moment_subset1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+# MOMENT with 50 embedding dimension 
+data_moment50 = read_csv("./data/embeddings_moment_subset50.csv") |>
+  janitor::clean_names() |>
+  select(-x1) |>
+  rename(x1 = x1_2) |>
+  arrange(seqn) 
+```
+
+
+## Get entropy  
+
+```{r}
+# Entropy
+data_entropy = read.csv("./data/data_wide_entropy.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(marital_status))
+
+# GPT1536 + entropy
+data_gpt1536_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_gpt1536, by = "seqn")
+
+# GPT50 + entropy
+data_gpt50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_gpt50, by = "seqn")
+
+# BERT768 + entropy
+data_bert768_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_bert768, by = "seqn")
+
+# BERT50 + entropy
+data_bert50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_bert50, by = "seqn")
+
+# Cohere1024 + entropy
+data_cohere1024_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_cohere1024, by = "seqn")
+
+# Cohere50 + entropy
+data_cohere50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_cohere50, by = "seqn")
+```
+
+
+## Filter 300 subjects to compare with MOMENT  
+
+```{r select 100 subjects}
+# matching 300 subjects from the MOMENT embedding were selected 
+data_gpt1536_filtered = data_gpt1536_entropy |> 
+  filter(seqn %in% data_moment50$seqn) 
+
+data_gpt50_filtered = data_gpt50_entropy |> 
+  filter(seqn %in% data_moment50$seqn) 
+
+data_bert768_filtered = data_bert768_entropy |> 
+  filter(seqn %in% data_moment50$seqn) 
+
+data_bert50_filtered = data_bert50_entropy |> 
+  filter(seqn %in% data_moment50$seqn)  
+
+data_cohere1024_filtered = data_cohere1024_entropy |> 
+  filter(seqn %in% data_moment50$seqn)  
+
+data_cohere50_filtered = data_cohere50_entropy |> 
+  filter(seqn %in% data_moment50$seqn)  
+```
+
+
+
+## Calculate AUC. Try moment first 
+
+```{r}
+set.seed(2)
+select_train = sample(nrow(data_moment50), floor(nrow(data_moment50)*0.8), replace = FALSE)
+train_m = data_moment50[select_train,]
+test_m = data_moment50[-select_train,]
+
+train_m_x = as.matrix(train_m[, !(names(train_m) %in% c("bmi", "seqn"))])
+train_m_y = train_m$bmi
+test_m_x = as.matrix(test_m[, !(names(test_m) %in% c("bmi", "seqn"))])
+test_m_y = test_m$bmi 
+    
+cv_ridge_m = cv.glmnet(train_m_x, train_m_y, alpha = 0, family = 'binomial',
+                          standardize = TRUE, grouped = FALSE, nfolds = 10)
+coef_m = predict(cv_ridge_m, s = "lambda.min", type = "coefficients")
+    
+pred_pro_ridge_m = predict(cv_ridge_m, s = cv_ridge_m$lambda.min, newx = test_m_x)
+    
+pred_ridge_m = exp(pred_pro_ridge_m)/(1+exp(pred_pro_ridge_m))
+pred_ridge_m = as.numeric(pred_ridge_m)
+    
+auc_ridge_m = auc(test_m_y, pred_ridge_m)
+auc_m = data.frame(auc_ridge = auc_ridge_m)
+
+roc_obj_m = pROC::roc(test_m_y, pred_ridge_m)
+plot(roc_obj_m, col = "blue", main = paste("ROC Curve (AUC =", round(auc_ridge_m, 3), ")"))
+```
+
+
+
+### Cohere50 
+
+```{r}
+set.seed(1)
+select_train = sample(nrow(data_cohere50_filtered), floor(nrow(data_cohere50_filtered)*0.8), replace = FALSE)
+train_c = data_cohere50_filtered[select_train,]
+test_c = data_cohere50_filtered[-select_train,]
+
+train_c_x = as.matrix(train[, !(names(train_c) %in% c("bmi", "seqn"))])
+train_c_y = train$bmi
+test_c_x = as.matrix(test[, !(names(test_c) %in% c("bmi", "seqn"))])
+test_c_y = test$bmi  
+
+
+cv_ridge_c = cv.glmnet(train_c_x, train_c_y, alpha = 0, family = 'binomial',
+                          standardize = TRUE, grouped = FALSE, nfolds = 10)
+coef_c = predict(cv_ridge_c, s = "lambda.min", type = "coefficients")
+    
+pred_pro_ridge_c = predict(cv_ridge_c, s = cv_ridge_c$lambda.min, newx = test_c_x)
+    
+pred_ridge_c = exp(pred_pro_ridge_c)/(1+exp(pred_pro_ridge_c))
+pred_ridge_c = as.numeric(pred_ridge_c)
+    
+auc_ridge_c = auc(test_c_y, pred_ridge_c)
+auc_c = data.frame(auc_ridge = auc_ridge_c)
+
+roc_obj_c = roc(test_c_y, pred_ridge_c)
+plot(roc_obj_c, col = "blue", main = paste("ROC Curve (AUC =", round(auc_ridge_c, 3), ")"))
+
+```
+
+
+
+## Compare AUC with other models 
+
+```{r}
+# simluation
+model_auc = function(data, sim){ 
+  
+  auc = data.frame()
+  
+  for (i in 1:sim){
+    
+    set.seed(i)
+    select_train = sample(nrow(data), floor(nrow(data)*0.8), replace = FALSE)
+    train = data[select_train,]
+    test = data[-select_train,]
+    
+    train_x = as.matrix(train[, !(names(train) %in% c("bmi", "seqn"))])
+    train_y = train$bmi
+    test_x = as.matrix(test[, !(names(test) %in% c("bmi", "seqn"))])
+    test_y = test$bmi  
+    
+    cv.ridge = cv.glmnet(train_x,train_y,alpha = 0,family = 'binomial',
+                          standardize=TRUE,grouped=FALSE,nfolds = 10)
+    coef_ridge=predict(cv.ridge, s = "lambda.min", type = "coefficients")
+    
+    y_predicted_pro_ridge = predict(cv.ridge,s=cv.ridge$lambda.min,newx=test_x)
+    
+    y_predicted_ridge = exp(y_predicted_pro_ridge)/(1+exp(y_predicted_pro_ridge))
+    y_predicted_ridge = as.numeric(y_predicted_ridge)
+    
+    auc_ridge = auc(test_y, y_predicted_ridge)
+    
+    inter.auc = data.frame(auc_ridge = auc_ridge)
+    auc = rbind(auc, inter.auc) 
+  }  
+  return(auc=auc)
+}
+
+auc_demo_only = model_auc(data_demo_only, sim = 1)
+auc_base = model_auc(data_wide, sim = 1)
+#auc_EntroGPT1536 = model_auc(data_gpt1536_filtered, sim = 1)
+auc_EntroGPT50 = model_auc(data_gpt50_filtered, sim = 1)
+auc_EntroBERT768 = model_auc(data_bert768_filtered, sim = 1)
+auc_EntroBERT50 = model_auc(data_bert50_filtered, sim = 1)
+auc_EntroCohere1024 = model_auc(data_cohere1024_filtered, sim = 1)
+auc_EntroCohere50 = model_auc(data_cohere50_filtered, sim = 1)
+auc_MOMENT1024 = model_auc(data_moment1024, sim = 1)
+auc_MOMENT50 = model_auc(data_moment50, sim = 1)
+
+auc_table = data.frame(
+  Model = c("Demographic Only", "Baseline", "EntroGPT50", "EntroBERT768", 
+                 "EntroBERT50", "EntroCohere1024", "EntroCohere50", "MOMENT1024", "MOMENT50"),
+  AUC = c(auc_demo_only$auc_ridge[[1]], auc_base$auc_ridge[[1]],
+          auc_EntroGPT50$auc_ridge[[1]], 
+          auc_EntroBERT768$auc_ridge[[1]], auc_EntroBERT50$auc_ridge[[1]],
+          auc_EntroCohere1024$auc_ridge[[1]], auc_EntroCohere50$auc_ridge[[1]], 
+          auc_MOMENT1024$auc_ridge[[1]], auc_MOMENT50$auc_ridge[[1]]))
+auc_table
+```
+
+
+## Plot for comparison 
+
+```{r} 
+# plot AUC 
+AUC_ridge = cbind(auc_demo_only, auc_base, auc_EntroGPT50, 
+                  auc_EntroBERT768, auc_EntroBERT50, 
+                  auc_EntroCohere1024, auc_EntroCohere50, 
+                  auc_MOMENT1024, auc_MOMENT50)
+
+colnames(AUC_ridge) = c("Demographic Only", "Baseline", "EntroGPT50", 
+                        "EntroBERT768", "EntroBERT50", 
+                        "EntroCohere1024", "EntroCohere50", 
+                        "MOMENT1024", "MOMENT50")
+
+AUC_ridge = AUC_ridge |>
+  mutate(across(everything(), as.numeric)) |> 
+  pivot_longer(cols = everything(),  
+               names_to = "Model",  
+               values_to = "AUC") 
+
+AUC_ridge$Model = factor(AUC_ridge$Model, 
+                         levels = c("Demographic Only", "Baseline", "EntroGPT50", 
+                        "EntroBERT768", "EntroBERT50", 
+                        "EntroCohere1024", "EntroCohere50", 
+                        "MOMENT1024", "MOMENT50"))
+
+ggplot(AUC_ridge, aes(x = Model, y = AUC, fill = Model)) +
+  geom_boxplot() +
+  theme(
+    legend.text = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.spacing.x = unit(2, "cm"),
+    panel.grid.major = element_line(colour = "grey80", size = 0.5),  
+    panel.grid.minor = element_line(colour = "grey90", size = 0.25)  
+  )  
+
+
+######## ROC plot.
+
+model_f1 = function(data, seed, interval) {
+  
+  set.seed(seed)
+  select_train = sample(nrow(data), floor(nrow(data)*0.8), replace = FALSE)
+  train = data[select_train,]
+  test = data[-select_train,]
+  
+  train_x = as.matrix(train[, !(names(train) %in% c("bmi", "seqn"))])
+  train_y = train$bmi
+  test_x = as.matrix(test[, !(names(test) %in% c("bmi", "seqn"))])
+  test_y = test$bmi 
+  
+  cv.fit = cv.glmnet(train_x, train_y, alpha = 0, family = 'binomial',
+                      standardize=TRUE,grouped=FALSE,nfolds = 10)
+  # use ridge: alpha = 0 
+  # coef_ridge=predict(cv.ridge, s = "lambda.min", type = "coefficients")
+  
+  y_predicted_pro = predict(cv.fit, s = cv.fit$lambda.min, newx = test_x)
+  
+  y_predicted = exp(y_predicted_pro)/(1+exp(y_predicted_pro))
+  y_predicted = as.numeric(y_predicted)
+  
+  roc = pROC::roc(test_y, y_predicted)
+  
+  # Initialize variables to store the best cutoff and the best F1 score
+  best_cutoff = 0
+  best_f1 = 0
+  
+  # Try different cutoff values to find the one that maximizes the F1 score
+  for (cutoff in seq(0.5, 1, by = interval)) {
+    y_hat = ifelse(y_predicted >= cutoff, 1, 0)
+    f1 = F1_Score(y_hat, test_y)
+    if (!is.na(f1) && f1 > best_f1) {
+      best_f1 <- f1
+      best_cutoff <- cutoff
+    }
+  }
+  
+  # calculate true positive, false positive, precision and recall based on maximum F1 score
+  maxF1_y_hat = ifelse(y_predicted >= best_cutoff, 1, 0)
+  maxF1_confusion = confusionMatrix(factor(maxF1_y_hat, levels=c(0, 1)), 
+                                    factor(test_y, levels=c(0, 1)))$table
+  maxF1_precision = maxF1_confusion[2, 2] / sum(maxF1_confusion[2, ])
+  maxF1_recall = maxF1_confusion[2, 2] / sum(maxF1_confusion[, 2])
+  maxF1_TP = maxF1_confusion[2, 2]
+  maxF1_FP = maxF1_confusion[2, 1]
+  
+  return(list(roc = roc, best_cutoff = best_cutoff, best_f1 = best_f1, 
+              maxF1_precision = maxF1_precision, maxF1_recall = maxF1_recall, 
+              maxF1_TP = maxF1_TP, maxF1_FP = maxF1_FP))
+}
+
+
+F1_Score = function(y_hat,y_true) {
+  confusion = confusionMatrix(factor(y_hat, levels = c(0, 1)), 
+                              factor(y_true, levels=c(0, 1)))$table
+  precision = confusion[2, 2] / sum(confusion[2, ])
+  recall = confusion[2, 2] / sum(confusion[, 2])
+  f1 = 2 * (precision * recall) / (precision + recall)
+  return(f1)
+}
+
+f1_demo_only = model_f1(data_demo_only, seed=1, interval=0.01)
+f1_base = model_f1(data_wide, seed=1, interval=0.01)
+#f1_EntroGPT1536 <- model_f1(data_gpt1536_entropy, seed=1, interval=0.01)
+f1_EntroGPT50 = model_f1(data_gpt50_filtered, seed=1, interval=0.01)
+f1_EntroBERT768 = model_f1(data_bert768_filtered, seed=1, interval=0.01)
+f1_EntroBERT50 <- model_f1(data_bert50_filtered, seed=1, interval=0.01)
+f1_EntroCohere1024 <- model_f1(data_cohere1024_filtered, seed=1, interval=0.01)
+f1_EntroCohere50 <- model_f1(data_cohere50_filtered, seed=1, interval=0.01)
+f1_MOMENT1024 <- model_f1(data_moment1024, seed=1, interval=0.01)
+f1_MOMENT50 <- model_f1(data_moment50, seed=1, interval=0.01)
+
+f1_file_names <- list(
+  f1_demo_only = "f1_demo_only",
+  f1_base = "f1_base",
+  f1_EntroGPT50 = "f1_EntroGPT50",
+  f1_EntroBERT768 = "f1_EntroBERT768",
+  f1_EntroBERT50 = "f1_EntroBERT50",
+  f1_EntroCohere1024 = "f1_EntroCohere1024",
+  f1_EntroCohere50 = "f1_EntroCohere50", 
+  f1_MOMENT1024 = "f1_MOMENT1024", 
+  f1_MOMENT50 = "f1_MOMENT50"
+)
+
+roc <- function(Model, filename) {
+  data.frame(
+    specificity = Model[["roc"]][["specificities"]],
+    sensitivity = Model[["roc"]][["sensitivities"]],
+    Model = filename)
+}
+
+roc_list <- list()
+
+for (var_name in f1_file_names) {
+  model_data <- get(var_name)
+  filename_prefix <- sub("^f1_", "", var_name)
+  filename <- filename_prefix
+  roc_list[[filename]] <- roc(model_data, filename_prefix)
+}
+
+new_model_names <- c("Demographic Only", "Baseline", "EntroGPT50", 
+                        "EntroBERT768", "EntroBERT50", 
+                        "EntroCohere1024", "EntroCohere50", 
+                        "MOMENT1024", "MOMENT50")
+
+names(roc_list) <- new_model_names 
+
+for (i in seq_along(roc_list)) {
+  roc_list[[i]]$Model <- new_model_names[i]
+}
+
+roc_data <- do.call(rbind, roc_list)
+
+roc_data$Model <- factor(roc_data$Model, 
+                         levels = c("Demographic Only", "Baseline", "EntroGPT50", 
+                        "EntroBERT768", "EntroBERT50", 
+                        "EntroCohere1024", "EntroCohere50", 
+                        "MOMENT1024", "MOMENT50"))
+
+ggplot(roc_data, aes(x = specificity, y = sensitivity, color = Model)) +
+  geom_line() +
+  theme( 
+    legend.spacing.x = unit(2, "cm"),
+    legend.justification = "left",   
+    legend.box.just = "left",        
+    legend.text = element_text(hjust = 0),
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank()         
+  ) +
+  labs(x = "Specificity", y = "Sensitivity") 
+```
+
+
+
+
+
+
+
+
+
