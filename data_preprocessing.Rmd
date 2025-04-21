@@ -181,3 +181,24 @@ save(data_wide_20, file = "data/data_wide_20.RData")
 write.csv(data_wide_20, file = "data/data_wide_20.csv")    
 ```
 
+
+## Visualization of data 
+
+```{r}
+library(ggplot2)
+
+# Choose a few patient IDs randomly
+sample_id = sample(unique(data_total$seqn), 20)
+
+# Filter data for those patients
+sample_data = data_total %>% filter(seqn %in% sample_id)
+
+# Plot number of diagnoses over time for each patient
+ggplot(sample_data, aes(x = time, y = intensity, group = seqn)) +
+  geom_line() +
+  facet_wrap(~seqn, scales = "free_y") +
+  labs(title = "Weekly Diagnosis Count per Patient", x = "Week", y = "Diagnosis Count")
+
+```
+
+
