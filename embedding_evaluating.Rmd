@@ -32,7 +32,7 @@ data_demo_only = data_wide |>
 ```
 
 
-## Get embedding data  
+## Get embedding data for other models 
 
 ```{r import embeddings}
 # GPT with 1536 embedding dimension
@@ -124,20 +124,6 @@ data_cohere50 = read.csv("./data2/data_wide_embedding_cohere50.csv") |>
     race = as.character(race), 
     education = as.character(education), 
     married = as.character(married))
-
-
-# MOMENT with 1024 embedding dimension 
-data_moment1024 = read.csv("./data/embeddings_moment_subset1024.csv") |>
-  janitor::clean_names() |>
-  select(-x) |>
-  arrange(seqn) 
-
-# MOMENT with 50 embedding dimension 
-data_moment50 = read_csv("./data/embeddings_moment_subset50.csv") |>
-  janitor::clean_names() |>
-  select(-x1) |>
-  rename(x1 = x1_2) |>
-  arrange(seqn) 
 ```
 
 
@@ -186,38 +172,72 @@ data_cohere50_entropy = data_entropy |>
 ```
 
 
-## Filter 300 subjects to compare with MOMENT  
+## Get MOMENT embeddings and combine the subsets 
 
-```{r select 100 subjects}
-# matching 300 subjects from the MOMENT embedding were selected 
-data_gpt1536_filtered = data_gpt1536_entropy |> 
-  filter(seqn %in% data_moment50$seqn) 
+```{r}
+# MOMENT with 1024 embedding dimension  
+data_moment1_1024 = read.csv("./data/embeddings_moment_subset1_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
 
-data_gpt50_filtered = data_gpt50_entropy |> 
-  filter(seqn %in% data_moment50$seqn) 
+data_moment2_1024 = read.csv("./data/embeddings_moment_subset2_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
 
-data_bert768_filtered = data_bert768_entropy |> 
-  filter(seqn %in% data_moment50$seqn) 
+data_moment1024 = rbind(data_moment1_1024, data_moment2_1024)
 
-data_bert50_filtered = data_bert50_entropy |> 
-  filter(seqn %in% data_moment50$seqn)  
 
-data_cohere1024_filtered = data_cohere1024_entropy |> 
-  filter(seqn %in% data_moment50$seqn)  
+# MOMENT with 50 embedding dimension 
+data_moment1_50 = read_csv("./data/embeddings_moment_subset1_50.csv") |>
+  janitor::clean_names() |>
+  select(-x1) |>
+  rename(x1 = x1_2) |>
+  arrange(seqn) 
 
-data_cohere50_filtered = data_cohere50_entropy |> 
-  filter(seqn %in% data_moment50$seqn)  
+data_moment2_50 = read_csv("./data/embeddings_moment_subset2_50.csv") |>
+  janitor::clean_names() |>
+  select(-x1) |>
+  rename(x1 = x1_2) |>
+  arrange(seqn) 
+
+data_moment50 = rbind(data_moment1_50, data_moment2_50)
 ```
 
+
+## Filter subjects to compare with MOMENT - IGNORE
+
+```{r eval=FALSE}
+# get matching subjects as MOMENT
+data_gpt1536 = data_gpt1536_entropy |> 
+  filter(seqn %in% data_moment_50$seqn) 
+
+data_gpt50_train = data_gpt50_entropy |> 
+  filter(seqn %in% data_moment50_train$seqn) 
+
+data_bert768_train = data_bert768_entropy |> 
+  filter(seqn %in% data_moment50_train$seqn) 
+
+data_bert50_train = data_bert50_entropy |> 
+  filter(seqn %in% data_moment50_train$seqn)  
+
+data_cohere1024_train = data_cohere1024_entropy |> 
+  filter(seqn %in% data_moment50_train$seqn)  
+
+data_cohere50_train = data_cohere50_entropy |> 
+  filter(seqn %in% data_moment50_train$seqn)  
+```
 
 
 ## Calculate AUC. Try moment first 
 
 ```{r}
-set.seed(2)
-select_train = sample(nrow(data_moment50), floor(nrow(data_moment50)*0.8), replace = FALSE)
-train_m = data_moment50[select_train,]
-test_m = data_moment50[-select_train,]
+set.seed(1)
+
+split_moment = sample(nrow(data_moment_50), floor(nrow(data_moment_50)*0.8), replace = FALSE)
+train_m = data_moment_50[split_moment,]
+test_m = data_moment_50[-split_moment,]
 
 train_m_x = as.matrix(train_m[, !(names(train_m) %in% c("bmi", "seqn"))])
 train_m_y = train_m$bmi
@@ -241,44 +261,10 @@ plot(roc_obj_m, col = "blue", main = paste("ROC Curve (AUC =", round(auc_ridge_m
 ```
 
 
-
-### Cohere50 
-
-```{r}
-set.seed(1)
-select_train = sample(nrow(data_cohere50_filtered), floor(nrow(data_cohere50_filtered)*0.8), replace = FALSE)
-train_c = data_cohere50_filtered[select_train,]
-test_c = data_cohere50_filtered[-select_train,]
-
-train_c_x = as.matrix(train[, !(names(train_c) %in% c("bmi", "seqn"))])
-train_c_y = train$bmi
-test_c_x = as.matrix(test[, !(names(test_c) %in% c("bmi", "seqn"))])
-test_c_y = test$bmi  
-
-
-cv_ridge_c = cv.glmnet(train_c_x, train_c_y, alpha = 0, family = 'binomial',
-                          standardize = TRUE, grouped = FALSE, nfolds = 10)
-coef_c = predict(cv_ridge_c, s = "lambda.min", type = "coefficients")
-    
-pred_pro_ridge_c = predict(cv_ridge_c, s = cv_ridge_c$lambda.min, newx = test_c_x)
-    
-pred_ridge_c = exp(pred_pro_ridge_c)/(1+exp(pred_pro_ridge_c))
-pred_ridge_c = as.numeric(pred_ridge_c)
-    
-auc_ridge_c = auc(test_c_y, pred_ridge_c)
-auc_c = data.frame(auc_ridge = auc_ridge_c)
-
-roc_obj_c = roc(test_c_y, pred_ridge_c)
-plot(roc_obj_c, col = "blue", main = paste("ROC Curve (AUC =", round(auc_ridge_c, 3), ")"))
-
-```
-
-
-
 ## Compare AUC with other models 
 
 ```{r}
-# simluation
+# simulation
 model_auc = function(data, sim){ 
   
   auc = data.frame()
@@ -312,25 +298,26 @@ model_auc = function(data, sim){
   return(auc=auc)
 }
 
-auc_demo_only = model_auc(data_demo_only, sim = 1)
-auc_base = model_auc(data_wide, sim = 1)
+auc_demo_only = model_auc(data_demo_only, sim = 10)
+auc_base = model_auc(data_wide, sim = 10)
 #auc_EntroGPT1536 = model_auc(data_gpt1536_filtered, sim = 1)
-auc_EntroGPT50 = model_auc(data_gpt50_filtered, sim = 1)
-auc_EntroBERT768 = model_auc(data_bert768_filtered, sim = 1)
-auc_EntroBERT50 = model_auc(data_bert50_filtered, sim = 1)
-auc_EntroCohere1024 = model_auc(data_cohere1024_filtered, sim = 1)
-auc_EntroCohere50 = model_auc(data_cohere50_filtered, sim = 1)
-auc_MOMENT1024 = model_auc(data_moment1024, sim = 1)
-auc_MOMENT50 = model_auc(data_moment50, sim = 1)
+auc_EntroGPT50 = model_auc(data_gpt50, sim = 10)
+auc_EntroBERT768 = model_auc(data_bert768, sim = 10)
+auc_EntroBERT50 = model_auc(data_bert50, sim = 10)
+auc_EntroCohere1024 = model_auc(data_cohere1024, sim = 10)
+auc_EntroCohere50 = model_auc(data_cohere50, sim = 10)
+auc_MOMENT1024 = model_auc(data_moment1024, sim = 10)
+auc_MOMENT50 = model_auc(data_moment50, sim = 10)
 
 auc_table = data.frame(
   Model = c("Demographic Only", "Baseline", "EntroGPT50", "EntroBERT768", 
-                 "EntroBERT50", "EntroCohere1024", "EntroCohere50", "MOMENT1024", "MOMENT50"),
-  AUC = c(auc_demo_only$auc_ridge[[1]], auc_base$auc_ridge[[1]],
-          auc_EntroGPT50$auc_ridge[[1]], 
-          auc_EntroBERT768$auc_ridge[[1]], auc_EntroBERT50$auc_ridge[[1]],
-          auc_EntroCohere1024$auc_ridge[[1]], auc_EntroCohere50$auc_ridge[[1]], 
-          auc_MOMENT1024$auc_ridge[[1]], auc_MOMENT50$auc_ridge[[1]]))
+                 "EntroBERT50", "EntroCohere1024", "EntroCohere50", "MOMENT1024",
+            "MOMENT50"),
+  AUC = c(mean(auc_demo_only$auc_ridge), mean(auc_base$auc_ridge),
+          mean(auc_EntroGPT50$auc_ridge), 
+          mean(auc_EntroBERT768$auc_ridge), mean(auc_EntroBERT50$auc_ridge),
+          mean(auc_EntroCohere1024$auc_ridge), mean(auc_EntroCohere50$auc_ridge), 
+          mean(auc_MOMENT1024$auc_ridge), mean(auc_MOMENT50$auc_ridge)))
 auc_table
 ```
 
@@ -339,6 +326,17 @@ auc_table
 
 ```{r} 
 # plot AUC 
+
+dim(auc_demo_only)
+dim(auc_base)
+dim(auc_EntroGPT50)
+dim(auc_EntroBERT768)
+dim(auc_EntroBERT50)
+dim(auc_EntroCohere1024)
+dim(auc_EntroCohere50)
+dim(auc_MOMENT1024)
+dim(auc_MOMENT50)
+
 AUC_ridge = cbind(auc_demo_only, auc_base, auc_EntroGPT50, 
                   auc_EntroBERT768, auc_EntroBERT50, 
                   auc_EntroCohere1024, auc_EntroCohere50, 
@@ -373,7 +371,6 @@ ggplot(AUC_ridge, aes(x = Model, y = AUC, fill = Model)) +
 
 
 ######## ROC plot.
-
 model_f1 = function(data, seed, interval) {
   
   set.seed(seed)
@@ -439,11 +436,11 @@ F1_Score = function(y_hat,y_true) {
 f1_demo_only = model_f1(data_demo_only, seed=1, interval=0.01)
 f1_base = model_f1(data_wide, seed=1, interval=0.01)
 #f1_EntroGPT1536 <- model_f1(data_gpt1536_entropy, seed=1, interval=0.01)
-f1_EntroGPT50 = model_f1(data_gpt50_filtered, seed=1, interval=0.01)
-f1_EntroBERT768 = model_f1(data_bert768_filtered, seed=1, interval=0.01)
-f1_EntroBERT50 <- model_f1(data_bert50_filtered, seed=1, interval=0.01)
-f1_EntroCohere1024 <- model_f1(data_cohere1024_filtered, seed=1, interval=0.01)
-f1_EntroCohere50 <- model_f1(data_cohere50_filtered, seed=1, interval=0.01)
+f1_EntroGPT50 = model_f1(data_gpt50, seed=1, interval=0.01)
+f1_EntroBERT768 = model_f1(data_bert768, seed=1, interval=0.01)
+f1_EntroBERT50 <- model_f1(data_bert50, seed=1, interval=0.01)
+f1_EntroCohere1024 <- model_f1(data_cohere1024, seed=1, interval=0.01)
+f1_EntroCohere50 <- model_f1(data_cohere50, seed=1, interval=0.01)
 f1_MOMENT1024 <- model_f1(data_moment1024, seed=1, interval=0.01)
 f1_MOMENT50 <- model_f1(data_moment50, seed=1, interval=0.01)
 
