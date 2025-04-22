@@ -2,7 +2,7 @@
 output: html_document
 ---
 
-## Embedding Comparing 
+## Embedding visualization 
 
 ```{r setup, include=FALSE}
 library(tidyverse)

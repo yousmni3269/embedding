@@ -36,16 +36,28 @@ data_demo_only = data_wide |>
 
 ```{r import embeddings}
 # GPT with 1536 embedding dimension
+# fixing the import...
 data_gpt1536 = read.csv("./data2/data_wide_embedding_gpt1536.csv") |>
   janitor::clean_names() |>
-  dplyr::select(-combined,-x)
+  mutate(pair_id = rep(1:(n() / 2), each = 2))
+####
+odd_rows = data_gpt1536 |>
+  filter(row_number() %% 2 == 1) |>
+  select(seqn, gender, age, race, education, married, pir, bmi, embedding, pair_id)
 
-data_gpt1536$embedding = gsub("\\[", "", data_gpt1536$embedding)
-data_gpt1536$embedding = gsub("\\]", "", data_gpt1536$embedding)
+odd_rows$embedding = gsub("\\[", "", odd_rows$embedding)
+odd_rows$embedding = gsub("\\]", "", odd_rows$embedding)
+  
+odd_rows = odd_rows |> 
+  separate(embedding, into = paste0("var", 1:1536), sep = ",\\s*", convert = TRUE)
+
+even_rows = data_gpt1536 |>
+  filter(row_number() %% 2 == 0) |>
+  select(-x)
+####
 
 data_gpt1536 = data_gpt1536 |>
-  separate(embedding, into = paste0("var", 1:1536), sep = ",\\s*", convert = TRUE) |>
-  slice(seq(1, n(), by = 2)) |>
+  separate(embedding, into = paste0("var", 1:1536), sep = ",\\s+", convert = TRUE) |>
   mutate(across(starts_with("var"), as.numeric), 
          gender = as.character(gender), 
          race = as.character(race), 
@@ -211,7 +223,7 @@ data_moment50 = rbind(data_moment1_50, data_moment2_50)
 ```{r eval=FALSE}
 # get matching subjects as MOMENT
 data_gpt1536 = data_gpt1536_entropy |> 
-  filter(seqn %in% data_moment_50$seqn) 
+  filter(seqn %in% data_moment50$seqn) 
 
 data_gpt50_train = data_gpt50_entropy |> 
   filter(seqn %in% data_moment50_train$seqn) 
@@ -235,9 +247,9 @@ data_cohere50_train = data_cohere50_entropy |>
 ```{r}
 set.seed(1)
 
-split_moment = sample(nrow(data_moment_50), floor(nrow(data_moment_50)*0.8), replace = FALSE)
-train_m = data_moment_50[split_moment,]
-test_m = data_moment_50[-split_moment,]
+split_moment = sample(nrow(data_moment50), floor(nrow(data_moment50)*0.8), replace = FALSE)
+train_m = data_moment50[split_moment,]
+test_m = data_moment50[-split_moment,]
 
 train_m_x = as.matrix(train_m[, !(names(train_m) %in% c("bmi", "seqn"))])
 train_m_y = train_m$bmi
@@ -266,9 +278,8 @@ plot(roc_obj_m, col = "blue", main = paste("ROC Curve (AUC =", round(auc_ridge_m
 ```{r}
 # simulation
 model_auc = function(data, sim){ 
-  
+
   auc = data.frame()
-  
   for (i in 1:sim){
     
     set.seed(i)
@@ -300,12 +311,12 @@ model_auc = function(data, sim){
 
 auc_demo_only = model_auc(data_demo_only, sim = 10)
 auc_base = model_auc(data_wide, sim = 10)
-#auc_EntroGPT1536 = model_auc(data_gpt1536_filtered, sim = 1)
-auc_EntroGPT50 = model_auc(data_gpt50, sim = 10)
-auc_EntroBERT768 = model_auc(data_bert768, sim = 10)
-auc_EntroBERT50 = model_auc(data_bert50, sim = 10)
-auc_EntroCohere1024 = model_auc(data_cohere1024, sim = 10)
-auc_EntroCohere50 = model_auc(data_cohere50, sim = 10)
+#auc_EntroGPT1536 = model_auc(data_gpt1536_entropy, sim = 10)
+auc_EntroGPT50 = model_auc(data_gpt50_entropy, sim = 10)
+auc_EntroBERT768 = model_auc(data_bert768_entropy, sim = 10)
+auc_EntroBERT50 = model_auc(data_bert50_entropy, sim = 10)
+auc_EntroCohere1024 = model_auc(data_cohere1024_entropy, sim = 10)
+auc_EntroCohere50 = model_auc(data_cohere50_entropy, sim = 10)
 auc_MOMENT1024 = model_auc(data_moment1024, sim = 10)
 auc_MOMENT50 = model_auc(data_moment50, sim = 10)
 
@@ -326,16 +337,6 @@ auc_table
 
 ```{r} 
 # plot AUC 
-
-dim(auc_demo_only)
-dim(auc_base)
-dim(auc_EntroGPT50)
-dim(auc_EntroBERT768)
-dim(auc_EntroBERT50)
-dim(auc_EntroCohere1024)
-dim(auc_EntroCohere50)
-dim(auc_MOMENT1024)
-dim(auc_MOMENT50)
 
 AUC_ridge = cbind(auc_demo_only, auc_base, auc_EntroGPT50, 
                   auc_EntroBERT768, auc_EntroBERT50, 

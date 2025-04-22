@@ -7,6 +7,8 @@
 *.Rproj
 .RDataTmp*
 
+embedding_comparing.Rmd
+
 # Data files
 data/*.xpt
 data/*.csv
