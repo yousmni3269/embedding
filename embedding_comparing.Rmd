@@ -1,0 +1,259 @@
+---
+output: html_document
+---
+
+## Embedding visualization 
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readr)
+library(Rtsne)
+library(ggplot2)
+library(corrplot)
+```
+
+## Get embedding data for other models 
+
+```{r import embeddings}
+# GPT with 1536 embedding dimension
+# fixing the import...
+data_gpt1536 = read.csv("./data2/data_wide_embedding_gpt1536.csv") |>
+  janitor::clean_names() |>
+  mutate(pair_id = rep(1:(n() / 2), each = 2))
+####
+odd_rows = data_gpt1536 |>
+  filter(row_number() %% 2 == 1) |>
+  select(seqn, gender, age, race, education, married, pir, bmi, embedding, pair_id)
+
+odd_rows$embedding = gsub("\\[", "", odd_rows$embedding)
+odd_rows$embedding = gsub("\\]", "", odd_rows$embedding)
+  
+odd_rows = odd_rows |> 
+  separate(embedding, into = paste0("var", 1:1536), sep = ",\\s*", convert = TRUE)
+
+even_rows = data_gpt1536 |>
+  filter(row_number() %% 2 == 0) |>
+  select(-x)
+####
+
+data_gpt1536 = data_gpt1536 |>
+  separate(embedding, into = paste0("var", 1:1536), sep = ",\\s+", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education),
+         married = as.character(married))
+
+
+# GPT with 50 embedding dimension
+data_gpt50 = read.csv("./data2/data_wide_embedding_gpt50.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married)) 
+
+
+# BERT with 768 embedding dimension
+data_bert768 = read.csv("./data2/data_wide_embedding_bert768.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined)
+
+data_bert768$embedding <- gsub("\\[", "", data_bert768$embedding)
+data_bert768$embedding <- gsub("\\]", "", data_bert768$embedding)
+data_bert768$embedding <- gsub("\n", " ", data_bert768$embedding)
+
+data_bert768 = data_bert768 |>
+  mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
+         embedding = str_replace_all(embedding, "\\s+", " ")) |> # Replace multiple spaces with a single space 
+  separate(embedding, into = paste0("var", 1:768), sep = "\\s+", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education), 
+         married = as.character(married)) 
+
+
+# BERT with 50 embedding dimension
+data_bert50 = read.csv("./data2/data_wide_embedding_bert50.csv") %>% 
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married))
+
+
+# Cohere with 1024 embedding dimension
+data_cohere1024 = read.csv("./data2/data_wide_embedding_cohere1024.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-n_tokens)
+
+data_cohere1024$embedding = gsub("\\[", "", data_cohere1024$embedding) 
+data_cohere1024$embedding = gsub("\\]", "", data_cohere1024$embedding)
+data_cohere1024$embedding = gsub(",", " ", data_cohere1024$embedding)
+
+data_cohere1024 = data_cohere1024 |> 
+  mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
+         embedding = str_replace_all(embedding, "\\s+", " ")) |> # Replace multiple spaces with a single space
+  separate(embedding, into = paste0("var", 1:1024), sep = "\\s+", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+        race = as.character(race), 
+        education = as.character(education), 
+        married = as.character(married))
+  
+
+# Cohere with 50 embedding dimension
+data_cohere50 = read.csv("./data2/data_wide_embedding_cohere50.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married))
+```
+
+
+## Get entropy  
+
+```{r}
+# Entropy
+data_entropy = read.csv("./data/data_wide_entropy.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(marital_status))
+
+# GPT1536 + entropy
+data_gpt1536_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_gpt1536, by = "seqn")
+
+# GPT50 + entropy
+data_gpt50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_gpt50, by = "seqn")
+
+# BERT768 + entropy
+data_bert768_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_bert768, by = "seqn")
+
+# BERT50 + entropy
+data_bert50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_bert50, by = "seqn")
+
+# Cohere1024 + entropy
+data_cohere1024_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_cohere1024, by = "seqn")
+
+# Cohere50 + entropy
+data_cohere50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_cohere50, by = "seqn")
+```
+
+
+## Get MOMENT embeddings and combine the subsets 
+
+```{r}
+# MOMENT with 1024 embedding dimension  
+data_moment1_1024 = read.csv("./data/embeddings_moment_subset1_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+data_moment2_1024 = read.csv("./data/embeddings_moment_subset2_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+data_moment1024 = rbind(data_moment1_1024, data_moment2_1024)
+
+
+# MOMENT with 50 embedding dimension 
+data_moment1_50 = read_csv("./data/embeddings_moment_subset1_50.csv") |>
+  janitor::clean_names() |>
+  select(-x1) |>
+  rename(x1 = x1_2) |>
+  arrange(seqn) 
+
+data_moment2_50 = read_csv("./data/embeddings_moment_subset2_50.csv") |>
+  janitor::clean_names() |>
+  select(-x1) |>
+  rename(x1 = x1_2) |>
+  arrange(seqn) 
+
+data_moment50 = rbind(data_moment1_50, data_moment2_50)
+```
+
+
+### Comparing the embeddings 
+
+```{r}
+# visualize 
+combined = rbind(data_gpt50, data_bert50, data_cohere50, data_moment50) |>
+  select(x0:x49)
+
+labels = c(rep("GPT", nrow(data_gpt50)), 
+           rep("BERT", nrow(data_bert50)), 
+           rep("Cohere", nrow(data_cohere50)), 
+           rep("MOMENT", nrow(data_moment50)))
+
+# Add small noise to avoid exact duplicates
+set.seed(1)
+combined_2 = combined + matrix(rnorm(nrow(combined) * ncol(combined), mean = 0, sd = 1e-6), 
+                                      nrow = nrow(combined), ncol = ncol(combined))
+tsne_result = Rtsne(combined_2, dims = 3, perplexity = 30)
+
+colors = ifelse(labels == "GPT", "blue",
+          ifelse(labels == "BERT", "green",
+          ifelse(labels == "Cohere", "orange", "red")))
+
+plot(tsne_result$Y[, 1:2], col = colors, pch = 19,
+     main = "t-SNE of 50-D Embeddings")
+legend("topright", legend = c("GPT", "BERT", "Cohere", "MOMENT"),
+       col = c("blue", "green", "orange", "red"), pch = 19)
+```
+
+
+```{r}
+# PCA 
+scaled_combined = scale(combined)
+pca_result = prcomp(scaled_combined, center = TRUE, scale. = TRUE)
+summary(pca_result)
+
+pca_data = data.frame(PC1 = pca_result$x[, 1], PC2 = pca_result$x[, 2])
+
+# Add labels for each model (you can adjust this based on how you want to color them)
+pca_data$model = rep(c("GPT", "BERT", "Cohere", "MOMENT"), each = nrow(data_gpt50))
+
+ggplot(pca_data, aes(x = PC1, y = PC2, color = model)) +
+  geom_point() +
+  labs(title = "PCA of Embeddings from GPT, BERT, and MOMENT") +
+  theme_minimal()
+```
+
+
+
+```{r}
+# cosine 
+cosine_dist = proxy::dist(scaled_combined, method = "cosine")
+
+ggplot(as.data.frame(as.table(as.matrix(cosine_dist))), aes(Var1, Var2, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Cosine Similarity Heatmap of Embeddings", x = "Model", y = "Model")
+```
+
+
