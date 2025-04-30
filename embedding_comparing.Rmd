@@ -32,12 +32,6 @@ squished_rows = data_gpt1536_raw |>
   filter(row_number() %% 2 == 1) |>
   select(embedding, pair_id)
 
-#squished_list = squished_rows |>
-  mutate(embedding_vec = str_remove_all(embedding, "\\[|\\]") |>
-           str_split(",\\s*") |>
-           map(~ as.numeric(.x))) |>
-  select(-embedding)
-
 squished_list = squished_rows |>
   mutate(
     embedding_vec = map(embedding, function(x) {
@@ -91,9 +85,9 @@ data_gpt1536 = data_gpt1536_long |>
   ) |>
   select(seqn, gender, age, race, education, married, pir, bmi, var1:var1536)
   
-test1 = data_gpt1536_long |>
-  group_by(seqn) |>
-  summarize(n = n())
+#test1 = data_gpt1536_long |>
+  #group_by(seqn) |>
+  #summarize(n = n())
 
 
 
@@ -108,9 +102,9 @@ data_bert768 = read.csv("./data2/data_wide_embedding_bert768.csv") |>
   janitor::clean_names() |>
   dplyr::select(-x,-combined)
 
-data_bert768$embedding <- gsub("\\[", "", data_bert768$embedding)
-data_bert768$embedding <- gsub("\\]", "", data_bert768$embedding)
-data_bert768$embedding <- gsub("\n", " ", data_bert768$embedding)
+data_bert768$embedding = gsub("\\[", "", data_bert768$embedding)
+data_bert768$embedding = gsub("\\]", "", data_bert768$embedding)
+data_bert768$embedding = gsub("\n", " ", data_bert768$embedding)
 
 data_bert768 = data_bert768 |>
   mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
@@ -148,9 +142,9 @@ data_cohere50 = read.csv("./data2/data_wide_embedding_cohere50.csv") |>
 ```
 
 
-## Get entropy  
+### Get entropy - eval=FALSE
 
-```{r entropy}
+```{r entropy, eval=FALSE}
 # Entropy
 data_entropy = read.csv("./data/data_wide_entropy.csv") |>
   janitor::clean_names() |>
@@ -188,7 +182,7 @@ data_cohere50_entropy = data_entropy |>
 ```
 
 
-## Get MOMENT embeddings and combine the subsets 
+### Get MOMENT embeddings and combine the subsets 
 
 ```{r import moment embeddings}
 # MOMENT with 1024 embedding dimension  
@@ -202,7 +196,20 @@ data_moment2_1024 = read.csv("./data/embeddings_moment_subset2_1024.csv") |>
   select(-x) |>
   arrange(seqn) 
 
-data_moment1024 = rbind(data_moment1_1024, data_moment2_1024)
+# Fix the renaming function to handle all column names at once
+data_moment1024 <- rbind(data_moment1_1024, data_moment2_1024) |>
+  rename_with(
+    .fn = function(x) {
+      new_names <- x
+      x_cols <- grepl("^x\\d+$", x)
+      
+      if(any(x_cols)) {
+        nums <- as.integer(gsub("x", "", x[x_cols])) + 1
+        new_names[x_cols] <- paste0("var", nums)
+      }
+      return(new_names)
+    }
+  )
 
 
 # MOMENT with 50 embedding dimension 
@@ -218,59 +225,123 @@ data_moment2_50 = read_csv("./data/embeddings_moment_subset2_50.csv") |>
   rename(x1 = x1_2) |>
   arrange(seqn) 
 
-data_moment50 = rbind(data_moment1_50, data_moment2_50)
+data_moment50 = rbind(data_moment1_50, data_moment2_50) 
 ```
 
 
-### Comparing the embeddings through visualization 
 
-```{r t-SNE}
-# t-SNE 
-set.seed(1)
+## Comparing the embeddings through visualization 
 
-tsne_result_moment = Rtsne(data_moment1024, dims = 2, perplexity = 30)
-colors = rainbow(nrow(data_moment1024))
-plot(tsne_result_moment$Y, col = colors, pch = 19,
-     main = "t-SNE of MOMENT 1024-D Embeddings",
-     xlab = "t-SNE 1", ylab = "t-SNE 2")
+```{r visualization with reduced dimension of 50}
+# combine the 50 dimension data without entropy 
+data_combined50 = bind_rows(data_moment50, 
+                            data_gpt50, 
+                            data_bert50, 
+                            data_cohere50)
+data_scaled50 = scale(data_combined50)
+labels = c(
+  rep("MOMENT", nrow(data_moment50)),
+  rep("EntroGPT", nrow(data_gpt50)),
+  rep("EntroBERT", nrow(data_bert50)), 
+  rep("EntroCohere", nrow(data_cohere50)))
 
 
-
-
-```
-
-
-```{r PCA}
 # PCA 
-pca_result = function(data) { 
-  row_means = rowMeans(data)
-  pca_result_data = prcomp(data, center = TRUE, scale. = TRUE)
-  pca_data = data.frame(
-    PC1 = pca_result_data$x[, 1], 
-    PC2 = pca_result_data$x[, 2], 
-    MeanValue = row_means 
-  )
-}
+pca_all50 = prcomp(data_scaled50, scale. = TRUE)
+pca_df = as.data.frame(pca_all50$x[, 1:2])
+pca_df$Model = labels
 
-pca_moment1024 = pca_result(data_moment1024)
-#pca_gpt1536_entro = pca_result(data_gpt1536_entropy)
-pca_bert768_entro = pca_result(data_bert768_entropy)
-pca_cohere1024_entro = pca_result(data_cohere1024_entropy)
-
-ggplot(pca_moment1024, aes(x = PC1, y = PC2, color = MeanValue)) +
-  geom_point(size = 0.8) +
-  labs(title = "PCA of MOMENT") +
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Model)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "PCA of Embeddings from MOMENT, GPT, BERT, and Cohere with 50 dimensions",
+       x = "Principal Component 1",
+       y = "Principal Component 2") +
   theme_minimal()
 
-ggplot(pca_bert768_entro, aes(x = PC1, y = PC2, color = MeanValue)) +
-  geom_point(size = 0.8) +
-  labs(title = "PCA of BERT and Entropy") +
-  theme_minimal()
 
-ggplot(pca_cohere1024_entro, aes(x = PC1, y = PC2, color = MeanValue)) +
-  geom_point(size = 0.8) +
-  labs(title = "PCA of Cohere and Entropy") +
+# t-SNE with 50 dimension 
+set.seed(1)
+data_scaled50_noise = data_scaled50 + matrix(
+  rnorm(nrow(data_scaled50) * ncol(data_scaled50), mean = 0, sd = 1e-6),
+  nrow = nrow(data_scaled50), ncol = ncol(data_scaled50)
+)
+
+tsne_result50 = Rtsne(as.matrix(data_scaled50_noise), dims = 2, perplexity = 30)
+
+tsne_df = as.data.frame(tsne_result50$Y)
+tsne_df$model = labels
+
+ggplot(tsne_df, aes(x = V1, y = V2, color = model)) +
+  geom_point(alpha = 1) +
+  labs(title = "t-SNE of Truncated Embeddings",
+       x = "t-SNE 1", y = "t-SNE 2") +
   theme_minimal()
 ```
 
+
+
+```{r PCA with reduced dimension of 768}
+# reducing the full embedding data to the lowest dimension (768 of EntroBert) 
+data_moment1024_red = data_moment1024[, 1:776]
+data_gpt1536_red = data_gpt1536[, 1:776]
+data_cohere1024_red = data_cohere1024[, 1:776]
+
+# combine the data 
+data_combined768 = bind_rows(data_moment1024_red, 
+                            data_gpt1536_red, 
+                            data_bert768, 
+                            data_cohere1024_red)
+data_scaled768 = scale(data_combined768)
+
+pca_all768 = prcomp(data_scaled768, scale. = TRUE)
+pca_df_2 = as.data.frame(pca_all768$x[, 1:2])
+pca_df_2$Model = labels
+
+ggplot(pca_df_2, aes(x = PC1, y = PC2, color = Model)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "PCA of Embeddings from MOMENT, GPT, BERT, and Cohere with 768 dimensions",
+       x = "Principal Component 1",
+       y = "Principal Component 2") +
+  theme_minimal()
+
+
+# t-SNE with 768 dimension 
+set.seed(1)
+data_scaled768_noise = data_scaled768 + matrix(
+  rnorm(nrow(data_scaled768) * ncol(data_scaled768), mean = 0, sd = 1e-6),
+  nrow = nrow(data_scaled768), ncol = ncol(data_scaled768)
+)
+
+tsne_result768 = Rtsne(as.matrix(data_scaled768_noise), dims = 2, perplexity = 30)
+
+tsne_df2 = as.data.frame(tsne_result768$Y)
+tsne_df2$model = labels
+
+ggplot(tsne_df2, aes(x = V1, y = V2, color = model)) +
+  geom_point(alpha = 1) +
+  labs(title = "t-SNE of Truncated Embeddings",
+       x = "t-SNE 1", y = "t-SNE 2") +
+  theme_minimal()
+```
+
+
+For both 50 dimension and 768 dimensions, 
+1) Each model cluster is distinct and separated. 
+2) MOMENT embeddings show more compact and curved cluster than the Entro models - this implies that MOMENT captures highly structured and temporally consistent patterns.  
+3) GPT and Cohere are more spread out and BERT is more dense and compact amongst the three. 
+
+
+## Try several simulations for t-SNE
+```{r}
+tsne_runs50 = lapply(1:10, function(seed) {
+  set.seed(seed)
+  Rtsne(scale(data_combined50), dims = 2, perplexity = 30)$Y
+})
+
+ggplot(tsne_runs50, aes(x = V1, y = V2, color = model)) +
+  geom_point(alpha = 1) +
+  labs(title = "t-SNE of Truncated Embeddings",
+       x = "t-SNE 1", y = "t-SNE 2") +
+  theme_minimal()
+```
 
