@@ -15,45 +15,92 @@ library(corrplot)
 ## Get embedding data for other models 
 
 ```{r import embeddings}
-# GPT with 1536 embedding dimension
-# fixing the import...
-data_gpt1536 = read.csv("./data2/data_wide_embedding_gpt1536.csv") |>
+# GPT with 1536 embedding dimension - fixing the import 
+
+## issue1: the raw data has embedding of each subject divided into two rows, the first row has data points squished into one cell and the second row has data points separates into respective cell.
+## issue2: when the data points are made into list for each row and combined, each subject has different data points (some subjects have 1535 embedding results...)  
+
+data_gpt1536_raw = read.csv("./data2/data_wide_embedding_gpt1536.csv") |>
   janitor::clean_names() |>
   mutate(pair_id = rep(1:(n() / 2), each = 2))
-####
-odd_rows = data_gpt1536 |>
+
+demo_gpt = data_gpt1536_raw |>
   filter(row_number() %% 2 == 1) |>
-  select(seqn, gender, age, race, education, married, pir, bmi, embedding, pair_id)
+  select(seqn, gender, age, race, education, married, pir, bmi, pair_id)
 
-odd_rows$embedding = gsub("\\[", "", odd_rows$embedding)
-odd_rows$embedding = gsub("\\]", "", odd_rows$embedding)
-  
-odd_rows = odd_rows |> 
-  separate(embedding, into = paste0("var", 1:1536), sep = ",\\s*", convert = TRUE)
+squished_rows = data_gpt1536_raw |>
+  filter(row_number() %% 2 == 1) |>
+  select(embedding, pair_id)
 
-even_rows = data_gpt1536 |>
+#squished_list = squished_rows |>
+  mutate(embedding_vec = str_remove_all(embedding, "\\[|\\]") |>
+           str_split(",\\s*") |>
+           map(~ as.numeric(.x))) |>
+  select(-embedding)
+
+squished_list = squished_rows |>
+  mutate(
+    embedding_vec = map(embedding, function(x) {
+      if (is.na(x)) return(NA)
+      clean_str = str_remove_all(x, "\\[|\\]") |> 
+        str_trim()
+      
+      if (nchar(clean_str) == 0) return(numeric(0))
+      vals = str_split(clean_str, ",\\s*")[[1]]
+      num_vals = suppressWarnings(as.numeric(vals))
+      
+      return(num_vals)
+    })
+  ) |>
+  filter(!map_lgl(embedding_vec, function(v) length(v) == 1 && is.na(v))) |>
+  select(-embedding)
+
+extended_rows = data_gpt1536_raw |>
   filter(row_number() %% 2 == 0) |>
-  select(-x)
-####
+  select(-x) |>
+  mutate(across(everything(), ~ str_remove(.x, "]\"$"))) 
 
-data_gpt1536 = data_gpt1536 |>
-  separate(embedding, into = paste0("var", 1:1536), sep = ",\\s+", convert = TRUE) |>
-  mutate(across(starts_with("var"), as.numeric), 
-         gender = as.character(gender), 
-         race = as.character(race), 
-         education = as.character(education),
-         married = as.character(married))
+colnames(extended_rows)[-which(colnames(extended_rows) == "pair_id")] = 
+  paste0("x", seq_len(ncol(extended_rows) - 1))
+
+extended_rows = extended_rows |>
+  mutate(across(everything(), ~ as.numeric(.x))) 
+
+extended_list = extended_rows |>
+  group_by(pair_id) |>
+  summarize(embedding_vec2 = list(as.numeric(unlist(across(where(is.numeric)))))
+  )
+
+demo_squish = demo_gpt |>
+  left_join(squished_list, by = "pair_id")
+  
+data_gpt1536_long = demo_squish |>
+  left_join(extended_list, by = "pair_id") |>
+  mutate(c_embedding = map2(embedding_vec, embedding_vec2, c)) |>
+  select(-embedding_vec, -embedding_vec2) |>
+  unnest(c_embedding) |>
+  group_by(seqn) |>
+  mutate(var_id = row_number()) |>
+  ungroup()
+
+data_gpt1536 = data_gpt1536_long |>
+  pivot_wider(
+    names_from = var_id, 
+    values_from = c_embedding, 
+    names_prefix = "var"
+  ) |>
+  select(seqn, gender, age, race, education, married, pir, bmi, var1:var1536)
+  
+test1 = data_gpt1536_long |>
+  group_by(seqn) |>
+  summarize(n = n())
+
 
 
 # GPT with 50 embedding dimension
 data_gpt50 = read.csv("./data2/data_wide_embedding_gpt50.csv") |>
   janitor::clean_names() |>
-  dplyr::select(-combined,-n_tokens) |>
-  mutate(
-    gender = as.character(gender), 
-    race = as.character(race), 
-    education = as.character(education), 
-    married = as.character(married)) 
+  dplyr::select(-combined,-n_tokens)
 
 
 # BERT with 768 embedding dimension
@@ -69,22 +116,13 @@ data_bert768 = data_bert768 |>
   mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
          embedding = str_replace_all(embedding, "\\s+", " ")) |> # Replace multiple spaces with a single space 
   separate(embedding, into = paste0("var", 1:768), sep = "\\s+", convert = TRUE) |>
-  mutate(across(starts_with("var"), as.numeric), 
-         gender = as.character(gender), 
-         race = as.character(race), 
-         education = as.character(education), 
-         married = as.character(married)) 
+  mutate(across(starts_with("var"), as.numeric))
 
 
 # BERT with 50 embedding dimension
 data_bert50 = read.csv("./data2/data_wide_embedding_bert50.csv") %>% 
   janitor::clean_names() |>
-  dplyr::select(-x,-combined,-n_tokens) |>
-  mutate(
-    gender = as.character(gender), 
-    race = as.character(race), 
-    education = as.character(education), 
-    married = as.character(married))
+  dplyr::select(-x,-combined,-n_tokens)
 
 
 # Cohere with 1024 embedding dimension
@@ -100,37 +138,23 @@ data_cohere1024 = data_cohere1024 |>
   mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
          embedding = str_replace_all(embedding, "\\s+", " ")) |> # Replace multiple spaces with a single space
   separate(embedding, into = paste0("var", 1:1024), sep = "\\s+", convert = TRUE) |>
-  mutate(across(starts_with("var"), as.numeric), 
-         gender = as.character(gender), 
-        race = as.character(race), 
-        education = as.character(education), 
-        married = as.character(married))
+  mutate(across(starts_with("var"), as.numeric))
   
 
 # Cohere with 50 embedding dimension
 data_cohere50 = read.csv("./data2/data_wide_embedding_cohere50.csv") |>
   janitor::clean_names() |>
-  dplyr::select(-x,-combined,-n_tokens) |>
-  mutate(
-    gender = as.character(gender), 
-    race = as.character(race), 
-    education = as.character(education), 
-    married = as.character(married))
+  dplyr::select(-x,-combined,-n_tokens)
 ```
 
 
 ## Get entropy  
 
-```{r}
+```{r entropy}
 # Entropy
 data_entropy = read.csv("./data/data_wide_entropy.csv") |>
   janitor::clean_names() |>
-  dplyr::select(-x) |>
-  mutate(
-    gender = as.character(gender), 
-    race = as.character(race), 
-    education = as.character(education), 
-    married = as.character(marital_status))
+  dplyr::select(-x) 
 
 # GPT1536 + entropy
 data_gpt1536_entropy = data_entropy |>
@@ -166,7 +190,7 @@ data_cohere50_entropy = data_entropy |>
 
 ## Get MOMENT embeddings and combine the subsets 
 
-```{r}
+```{r import moment embeddings}
 # MOMENT with 1024 embedding dimension  
 data_moment1_1024 = read.csv("./data/embeddings_moment_subset1_1024.csv") |>
   janitor::clean_names() |>
@@ -198,62 +222,55 @@ data_moment50 = rbind(data_moment1_50, data_moment2_50)
 ```
 
 
-### Comparing the embeddings 
+### Comparing the embeddings through visualization 
 
-```{r}
-# visualize 
-combined = rbind(data_gpt50, data_bert50, data_cohere50, data_moment50) |>
-  select(x0:x49)
-
-labels = c(rep("GPT", nrow(data_gpt50)), 
-           rep("BERT", nrow(data_bert50)), 
-           rep("Cohere", nrow(data_cohere50)), 
-           rep("MOMENT", nrow(data_moment50)))
-
-# Add small noise to avoid exact duplicates
+```{r t-SNE}
+# t-SNE 
 set.seed(1)
-combined_2 = combined + matrix(rnorm(nrow(combined) * ncol(combined), mean = 0, sd = 1e-6), 
-                                      nrow = nrow(combined), ncol = ncol(combined))
-tsne_result = Rtsne(combined_2, dims = 3, perplexity = 30)
 
-colors = ifelse(labels == "GPT", "blue",
-          ifelse(labels == "BERT", "green",
-          ifelse(labels == "Cohere", "orange", "red")))
+tsne_result_moment = Rtsne(data_moment1024, dims = 2, perplexity = 30)
+colors = rainbow(nrow(data_moment1024))
+plot(tsne_result_moment$Y, col = colors, pch = 19,
+     main = "t-SNE of MOMENT 1024-D Embeddings",
+     xlab = "t-SNE 1", ylab = "t-SNE 2")
 
-plot(tsne_result$Y[, 1:2], col = colors, pch = 19,
-     main = "t-SNE of 50-D Embeddings")
-legend("topright", legend = c("GPT", "BERT", "Cohere", "MOMENT"),
-       col = c("blue", "green", "orange", "red"), pch = 19)
+
+
+
 ```
 
 
-```{r}
+```{r PCA}
 # PCA 
-scaled_combined = scale(combined)
-pca_result = prcomp(scaled_combined, center = TRUE, scale. = TRUE)
-summary(pca_result)
+pca_result = function(data) { 
+  row_means = rowMeans(data)
+  pca_result_data = prcomp(data, center = TRUE, scale. = TRUE)
+  pca_data = data.frame(
+    PC1 = pca_result_data$x[, 1], 
+    PC2 = pca_result_data$x[, 2], 
+    MeanValue = row_means 
+  )
+}
 
-pca_data = data.frame(PC1 = pca_result$x[, 1], PC2 = pca_result$x[, 2])
+pca_moment1024 = pca_result(data_moment1024)
+#pca_gpt1536_entro = pca_result(data_gpt1536_entropy)
+pca_bert768_entro = pca_result(data_bert768_entropy)
+pca_cohere1024_entro = pca_result(data_cohere1024_entropy)
 
-# Add labels for each model (you can adjust this based on how you want to color them)
-pca_data$model = rep(c("GPT", "BERT", "Cohere", "MOMENT"), each = nrow(data_gpt50))
-
-ggplot(pca_data, aes(x = PC1, y = PC2, color = model)) +
-  geom_point() +
-  labs(title = "PCA of Embeddings from GPT, BERT, and MOMENT") +
+ggplot(pca_moment1024, aes(x = PC1, y = PC2, color = MeanValue)) +
+  geom_point(size = 0.8) +
+  labs(title = "PCA of MOMENT") +
   theme_minimal()
-```
 
+ggplot(pca_bert768_entro, aes(x = PC1, y = PC2, color = MeanValue)) +
+  geom_point(size = 0.8) +
+  labs(title = "PCA of BERT and Entropy") +
+  theme_minimal()
 
-
-```{r}
-# cosine 
-cosine_dist = proxy::dist(scaled_combined, method = "cosine")
-
-ggplot(as.data.frame(as.table(as.matrix(cosine_dist))), aes(Var1, Var2, fill = Freq)) +
-  geom_tile() +
-  scale_fill_gradient(low = "white", high = "blue") +
-  labs(title = "Cosine Similarity Heatmap of Embeddings", x = "Model", y = "Model")
+ggplot(pca_cohere1024_entro, aes(x = PC1, y = PC2, color = MeanValue)) +
+  geom_point(size = 0.8) +
+  labs(title = "PCA of Cohere and Entropy") +
+  theme_minimal()
 ```
 
 
