@@ -1,8 +1,9 @@
 ---
+title: "embedding visualization"
 output: html_document
 ---
 
-## Embedding visualization 
+# Get embedding data 
 
 ```{r setup, include=FALSE}
 library(tidyverse)
@@ -10,9 +11,10 @@ library(readr)
 library(Rtsne)
 library(ggplot2)
 library(corrplot)
+library(factoextra)
 ```
 
-## Get embedding data for other models 
+## 1. Get other model embedding data 
 
 ```{r import embeddings}
 # GPT with 1536 embedding dimension - fixing the import 
@@ -20,7 +22,7 @@ library(corrplot)
 ## issue1: the raw data has embedding of each subject divided into two rows, the first row has data points squished into one cell and the second row has data points separates into respective cell.
 ## issue2: when the data points are made into list for each row and combined, each subject has different data points (some subjects have 1535 embedding results...)  
 
-data_gpt1536_raw = read.csv("./data2/data_wide_embedding_gpt1536.csv") |>
+data_gpt1536_raw <- read.csv("./data2/data_wide_embedding_gpt1536.csv") |>
   janitor::clean_names() |>
   mutate(pair_id = rep(1:(n() / 2), each = 2))
 
@@ -85,9 +87,9 @@ data_gpt1536 = data_gpt1536_long |>
   ) |>
   select(seqn, gender, age, race, education, married, pir, bmi, var1:var1536)
   
-#test1 = data_gpt1536_long |>
-  #group_by(seqn) |>
-  #summarize(n = n())
+test1 = data_gpt1536_long |>
+  group_by(seqn) |>
+  summarize(n = n())
 
 
 
@@ -141,10 +143,9 @@ data_cohere50 = read.csv("./data2/data_wide_embedding_cohere50.csv") |>
   dplyr::select(-x,-combined,-n_tokens)
 ```
 
+## 2. Get entropy 
 
-### Get entropy - eval=FALSE
-
-```{r entropy, eval=FALSE}
+```{r entropy}
 # Entropy
 data_entropy = read.csv("./data/data_wide_entropy.csv") |>
   janitor::clean_names() |>
@@ -181,8 +182,7 @@ data_cohere50_entropy = data_entropy |>
   inner_join(data_cohere50, by = "seqn")
 ```
 
-
-### Get MOMENT embeddings and combine the subsets 
+## 3. Get MOMENT embeddings and combine the subsets into one data
 
 ```{r import moment embeddings}
 # MOMENT with 1024 embedding dimension  
@@ -230,118 +230,239 @@ data_moment50 = rbind(data_moment1_50, data_moment2_50)
 
 
 
-## Comparing the embeddings through visualization 
+# Comparing the embeddings through visualization 
 
-```{r visualization with reduced dimension of 50}
-# combine the 50 dimension data without entropy 
-data_combined50 = bind_rows(data_moment50, 
-                            data_gpt50, 
-                            data_bert50, 
-                            data_cohere50)
-data_scaled50 = scale(data_combined50)
-labels = c(
-  rep("MOMENT", nrow(data_moment50)),
-  rep("EntroGPT", nrow(data_gpt50)),
-  rep("EntroBERT", nrow(data_bert50)), 
-  rep("EntroCohere", nrow(data_cohere50)))
+## PCA of full dimension models 
 
+```{r PCA_bert768}
+# separate into embeddings/entropy and covariates/response
+dat_entrobert_1 = data_bert768_entropy[, c(2:8, 16:783)]
+dat_entrobert_2 = data_bert768_entropy[, c(1,9:15)]
 
-# PCA 
-pca_all50 = prcomp(data_scaled50, scale. = TRUE)
-pca_df = as.data.frame(pca_all50$x[, 1:2])
-pca_df$Model = labels
+dat_entrobert_1 = as.data.frame(scale(dat_entrobert_1))
+dat_entrobert_1$seqn = data_bert768_entropy$seqn
 
-ggplot(pca_df, aes(x = PC1, y = PC2, color = Model)) +
-  geom_point(alpha = 0.6) +
-  labs(title = "PCA of Embeddings from MOMENT, GPT, BERT, and Cohere with 50 dimensions",
-       x = "Principal Component 1",
-       y = "Principal Component 2") +
-  theme_minimal()
+dat_entrobert_combined = dat_entrobert_1 |>
+  left_join(dat_entrobert_2, by = "seqn")
 
+pca_entrobert_vars = names(dat_entrobert_combined)[names(dat_entrobert_combined) != "seqn"]
+pca_entrobert = prcomp(dat_entrobert_combined[, pca_entrobert_vars], scale. = TRUE)
 
-# t-SNE with 50 dimension 
-set.seed(1)
-data_scaled50_noise = data_scaled50 + matrix(
-  rnorm(nrow(data_scaled50) * ncol(data_scaled50), mean = 0, sd = 1e-6),
-  nrow = nrow(data_scaled50), ncol = ncol(data_scaled50)
-)
+fviz_pca_ind(pca_entrobert, 
+             habillage = ifelse(dat_entrobert_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+```
 
-tsne_result50 = Rtsne(as.matrix(data_scaled50_noise), dims = 2, perplexity = 30)
+```{r PCA_cohere1024}
+# separate into embeddings/entropy and covariates/response
+dat_entrocohere_1 = data_cohere1024_entropy[, c(2:8, 16:1039)]
+dat_entrocohere_2 = data_cohere1024_entropy[, c(1,9:15)]
 
-tsne_df = as.data.frame(tsne_result50$Y)
-tsne_df$model = labels
+dat_entrocohere_1 = as.data.frame(scale(dat_entrocohere_1))
+dat_entrocohere_1$seqn = data_cohere1024_entropy$seqn
 
-ggplot(tsne_df, aes(x = V1, y = V2, color = model)) +
-  geom_point(alpha = 1) +
-  labs(title = "t-SNE of Truncated Embeddings",
-       x = "t-SNE 1", y = "t-SNE 2") +
+dat_entrocohere_combined = dat_entrocohere_1 |>
+  left_join(dat_entrocohere_2, by = "seqn")
+
+pca_entrocohere_vars = names(dat_entrocohere_combined)[names(dat_entrocohere_combined) != "seqn"]
+pca_entrocohere = prcomp(dat_entrocohere_combined[, pca_entrocohere_vars], scale. = TRUE)
+
+fviz_pca_ind(pca_entrocohere, 
+             habillage = ifelse(dat_entrocohere_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+```
+
+```{r PCA_moment1024}
+# separate into embeddings/entropy and covariates/response
+dat_moment_1 = data_moment1024[, c(9:1032)]
+dat_moment_2 = data_moment1024[, c(1:8)]
+
+dat_moment_1 = as.data.frame(scale(dat_moment_1))
+dat_moment_1$seqn = data_moment1024$seqn
+
+dat_moment_combined = dat_moment_1 |>
+  left_join(dat_moment_2, by = "seqn")
+
+pca_moment_vars = names(dat_moment_combined)[names(dat_moment_combined) != "seqn"]
+pca_moment = prcomp(dat_moment_combined[, pca_moment_vars], scale. = TRUE)
+
+fviz_pca_ind(pca_moment, 
+             habillage = ifelse(dat_moment_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+```
+
+## t_SNE of full dimension models 
+
+```{r t_SNE_BERT}
+set.seed(1) 
+dat_tsne_entrobert = dat_entrobert_combined[, pca_entrobert_vars]
+
+tsne_entrobert = Rtsne(as.matrix(dat_tsne_entrobert), dims = 2, perplexity = 30)
+
+tsne_entrobert_df = data.frame(
+  tSNE1 = tsne_entrobert$Y[,1],
+  tSNE2 = tsne_entrobert$Y[,2],
+  bmi = ifelse(dat_entrobert_combined$bmi == 1, "BMI>25", "Otherwise"))
+
+ggplot(tsne_entrobert_df, aes(x = tSNE1, y = tSNE2, color = bmi)) +
+  geom_point() +
+  labs(title = "t-SNE of Embeddings from EntroBERT",
+       x = "t-SNE Dimension 1",
+       y = "t-SNE Dimension 2") +
   theme_minimal()
 ```
 
+```{r t_SNE_Cohere}
+set.seed(1) 
+dat_tsne_entrocohere = dat_entrocohere_combined[, pca_entrocohere_vars]
 
+tsne_entrocohere = Rtsne(as.matrix(dat_tsne_entrocohere), dims = 2, perplexity = 30)
 
-```{r PCA with reduced dimension of 768}
-# reducing the full embedding data to the lowest dimension (768 of EntroBert) 
-data_moment1024_red = data_moment1024[, 1:776]
-data_gpt1536_red = data_gpt1536[, 1:776]
-data_cohere1024_red = data_cohere1024[, 1:776]
+tsne_entrocohere_df = data.frame(
+  tSNE1 = tsne_entrocohere$Y[,1],
+  tSNE2 = tsne_entrocohere$Y[,2],
+  bmi = ifelse(dat_entrocohere_combined$bmi == 1, "BMI>25", "Otherwise"))
 
-# combine the data 
-data_combined768 = bind_rows(data_moment1024_red, 
-                            data_gpt1536_red, 
-                            data_bert768, 
-                            data_cohere1024_red)
-data_scaled768 = scale(data_combined768)
-
-pca_all768 = prcomp(data_scaled768, scale. = TRUE)
-pca_df_2 = as.data.frame(pca_all768$x[, 1:2])
-pca_df_2$Model = labels
-
-ggplot(pca_df_2, aes(x = PC1, y = PC2, color = Model)) +
-  geom_point(alpha = 0.6) +
-  labs(title = "PCA of Embeddings from MOMENT, GPT, BERT, and Cohere with 768 dimensions",
-       x = "Principal Component 1",
-       y = "Principal Component 2") +
-  theme_minimal()
-
-
-# t-SNE with 768 dimension 
-set.seed(1)
-data_scaled768_noise = data_scaled768 + matrix(
-  rnorm(nrow(data_scaled768) * ncol(data_scaled768), mean = 0, sd = 1e-6),
-  nrow = nrow(data_scaled768), ncol = ncol(data_scaled768)
-)
-
-tsne_result768 = Rtsne(as.matrix(data_scaled768_noise), dims = 2, perplexity = 30)
-
-tsne_df2 = as.data.frame(tsne_result768$Y)
-tsne_df2$model = labels
-
-ggplot(tsne_df2, aes(x = V1, y = V2, color = model)) +
-  geom_point(alpha = 1) +
-  labs(title = "t-SNE of Truncated Embeddings",
-       x = "t-SNE 1", y = "t-SNE 2") +
+ggplot(tsne_entrocohere_df, aes(x = tSNE1, y = tSNE2, color = bmi)) +
+  geom_point() +
+  labs(title = "t-SNE of Embeddings from EntroCohere",
+       x = "t-SNE Dimension 1",
+       y = "t-SNE Dimension 2") +
   theme_minimal()
 ```
 
+```{r t_SNE_MOMENT}
+set.seed(1) 
+dat_tsne_moment = dat_moment_combined[, pca_moment_vars]
 
-For both 50 dimension and 768 dimensions, 
-1) Each model cluster is distinct and separated. 
-2) MOMENT embeddings show more compact and curved cluster than the Entro models - this implies that MOMENT captures highly structured and temporally consistent patterns.  
-3) GPT and Cohere are more spread out and BERT is more dense and compact amongst the three. 
+tsne_moment = Rtsne(as.matrix(dat_tsne_moment), dims = 2, perplexity = 30)
+
+tsne_moment_df = data.frame(
+  tSNE1 = tsne_moment$Y[,1],
+  tSNE2 = tsne_moment$Y[,2],
+  bmi = ifelse(dat_moment_combined$bmi == 1, "BMI>25", "Otherwise"))
+
+ggplot(tsne_moment_df, aes(x = tSNE1, y = tSNE2, color = bmi)) +
+  geom_point() +
+  labs(title = "t-SNE of Embeddings from MOMENT",
+       x = "t-SNE Dimension 1",
+       y = "t-SNE Dimension 2") +
+  theme_minimal()
+```
+
+```{r function, eval=FALSE}
+run_embedding_analysis = function(data, embedding_cols, covariate_cols, id_col = "seqn", 
+                                   response_col = "bmi", response_threshold = 1,
+                                   response_labels = c("BMI>25", "Otherwise")) {
+  
+  dat_embeddings = data[, embedding_cols]
+  dat_covariates = data[, c(id_col, covariate_cols, response_col)]
+  
+  dat_embeddings_scaled = as.data.frame(scale(data_embeddings))
+  
+  dat_embeddings_scaled[[id_col]] = data[[id_col]]
+  
+  dat_combined = dat_embeddings_scaled |>
+    left_join(dat_covariates, by = id_col)
+  
+  # pca 
+  pca_vars = names(dat_combined)[names(dat_combined) != id_col]
+  pca_result = prcomp(dat_combined[, pca_vars], scale. = TRUE)
+  
+  response_factor = ifelse(dat_combined[[response_col]] == response_threshold, 
+                           response_labels[1], response_labels[2])
+  
+  pca_viz = fviz_pca_ind(pca_result, habillage = response_factor, label = c("var"))
+  
+  pca_scores = as.data.frame(pca_result$x)
+  pca_scores[[response_col]] = response_factor
+  
+  # t-SNE
+  set.seed(1)
+  tsne_result <- Rtsne(as.matrix(dat_combined[, pca_vars]), 
+                       dims = 2, perplexity = min(30, nrow(data)/4), 
+                       verbose = TRUE, max_iter = 1000)
+  
+  # Create t-SNE data frame
+  tsne_df = data.frame(
+    tSNE1 = tsne_result$Y[,1],
+    tSNE2 = tsne_result$Y[,2],
+    response = response_factor
+  )
+  
+  # Return results as a list
+  return(list(
+    combined_data = dat_combined,
+    pca_result = pca_result,
+    pca_viz = pca_viz,
+    pca_scores = pca_scores,
+    tsne_result = tsne_result,
+    tsne_df = tsne_df
+  ))
+}
+```
 
 
-## Try several simulations for t-SNE
+## Check PCA with 20 dimensions 
+
 ```{r}
-tsne_runs50 = lapply(1:10, function(seed) {
-  set.seed(seed)
-  Rtsne(scale(data_combined50), dims = 2, perplexity = 30)$Y
-})
+# separate into embeddings/entropy and covariates/response
+pca_entrobert_20 = prcomp(dat_entrobert_combined[, pca_entrobert_vars], scale. = TRUE, rank = 20)
 
-ggplot(tsne_runs50, aes(x = V1, y = V2, color = model)) +
-  geom_point(alpha = 1) +
-  labs(title = "t-SNE of Truncated Embeddings",
-       x = "t-SNE 1", y = "t-SNE 2") +
-  theme_minimal()
+fviz_pca_ind(pca_entrobert_20, 
+             habillage = ifelse(dat_entrobert_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
 ```
+
+
+## PCA of the original data 
+
+```{r}
+dat_original = read.csv("./data/data_wide.csv")
+
+# separate into embeddings/entropy and covariates/response
+dat_original_1 = dat_original[, c(10:2025)]
+dat_original_2 = dat_original[, c(2:9)]
+
+dat_original_1 = as.data.frame(scale(dat_original_1))
+dat_original_1$seqn = dat_original$seqn
+
+dat_original_combined = dat_original_1 |>
+  left_join(dat_original_2, by = "seqn")
+
+pca_original_vars = names(dat_original_combined)[names(dat_original_combined) != "seqn"]
+pca_original = prcomp(dat_original_combined[, pca_original_vars], scale. = TRUE)
+
+#pca_original_scores = as.data.frame(pca_original$x)
+#pca_original_scores$bmi = ifelse(dat_original_combined$bmi == 1, "BMI>25", "Otherwise")
+#ggplot(pca_original_scores, aes(x = PC1, y = PC2, color = bmi)) +
+  #geom_point(alpha = 0.8) +
+  #labs(title = "PCA of Original Data per BMI",
+       #x = paste0("PC1 (", round(summary(pca_original)$importance[2,1] * 100, 1), "%)"),
+       #y = paste0("PC2 (", round(summary(pca_original)$importance[2,2] * 100, 1), "%)"),
+       #color = "BMI status") +
+  #theme_minimal() 
+
+
+# color by response (bmi)
+fviz_pca_ind(pca_original, 
+             habillage = ifelse(dat_original_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+
+# color by gender
+fviz_pca_ind(pca_original, 
+             habillage = ifelse(dat_original_combined$gender==1, "male", "female"), 
+             label = c("var"))
+
+# color by race
+fviz_pca_ind(pca_original, 
+             habillage = factor(dat_original_combined$race,
+                               levels = 1:5,
+                               labels = c("Mexican American", "Other Hispanic", 
+                                         "Non-Hispanic White", "Non-Hispanic Black", 
+                                         "Other")), 
+             label = c("var"))
+```
+
+
 
