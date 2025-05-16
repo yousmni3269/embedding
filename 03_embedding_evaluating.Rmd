@@ -382,18 +382,18 @@ model_svm = function(data, sim){
 auc_moment = model_svm(data_moment1024, sim = 3)
 auc_moment_raw = model_svm(data_moment_raw1024, sim = 3)
 auc_moment_recoded = model_svm(data_moment_recoded1024, sim = 3)
-auc_entrogpt = model_svm(data_gpt1536_entropy, sim = 3)
+#auc_entrogpt = model_svm(data_gpt1536_entropy, sim = 3)
 auc_entrobert = model_svm(data_bert768_entropy, sim = 3)
 auc_entrocohere = model_svm(data_cohere1024_entropy, sim = 3)
 
-auc_table = data.frame(Model = c("EntroGPT1536", "EntroBERT768", "EntroCohere1024", "MOMENT1024", "MOMENT1024_raw", "MOMENT1024_raw_recoded"),
-                       AUC = c(mean(auc_entrogpt$auc), 
+auc_table = data.frame(Model = c("EntroBERT768", "EntroCohere1024", "MOMENT1024", "MOMENT1024_raw", "MOMENT1024_raw_recoded"),
+                       AUC = c(#mean(auc_entrogpt$auc), 
                                mean(auc_entrobert$auc),
                                mean(auc_entrocohere$auc), 
                                mean(auc_moment$auc), 
                                mean(auc_moment_raw$auc),
                                mean(auc_moment_recoded$auc)), 
-                       Accuracy = c(mean(auc_entrogpt$accuracy), 
+                       Accuracy = c(#mean(auc_entrogpt$accuracy), 
                                mean(auc_entrobert$accuracy),
                                mean(auc_entrocohere$accuracy), 
                                mean(auc_moment$accuracy), 
