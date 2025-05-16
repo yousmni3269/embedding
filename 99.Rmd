@@ -1,0 +1,278 @@
+---
+title: "embedding_evaluating_draft"
+author: "Soomin You"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Calculate AUC. Try moment first 
+
+```{r}
+set.seed(1)
+
+split_moment = sample(nrow(data_moment50), floor(nrow(data_moment50)*0.8), replace = FALSE)
+train_m = data_moment50[split_moment,]
+test_m = data_moment50[-split_moment,]
+
+train_m_x = as.matrix(train_m[, !(names(train_m) %in% c("bmi", "seqn"))])
+train_m_y = train_m$bmi
+test_m_x = as.matrix(test_m[, !(names(test_m) %in% c("bmi", "seqn"))])
+test_m_y = test_m$bmi 
+    
+cv_ridge_m = cv.glmnet(train_m_x, train_m_y, alpha = 0, family = 'binomial',
+                          standardize = TRUE, grouped = FALSE, nfolds = 10)
+coef_m = predict(cv_ridge_m, s = "lambda.min", type = "coefficients")
+    
+pred_pro_ridge_m = predict(cv_ridge_m, s = cv_ridge_m$lambda.min, newx = test_m_x)
+    
+pred_ridge_m = exp(pred_pro_ridge_m)/(1+exp(pred_pro_ridge_m))
+pred_ridge_m = as.numeric(pred_ridge_m)
+    
+auc_ridge_m = auc(test_m_y, pred_ridge_m)
+auc_m = data.frame(auc_ridge = auc_ridge_m)
+
+roc_obj_m = pROC::roc(test_m_y, pred_ridge_m)
+plot(roc_obj_m, col = "blue", main = paste("ROC Curve (AUC =", round(auc_ridge_m, 3), ")"))
+```
+
+
+## Compare AUC with other models 
+
+```{r}
+# simulation
+model_auc = function(data, sim){ 
+
+  auc = data.frame()
+  for (i in 1:sim){
+    
+    set.seed(i)
+    select_train = sample(nrow(data), floor(nrow(data)*0.8), replace = FALSE)
+    train = data[select_train,]
+    test = data[-select_train,]
+    
+    train_x = as.matrix(train[, !(names(train) %in% c("bmi", "seqn"))])
+    train_y = train$bmi
+    test_x = as.matrix(test[, !(names(test) %in% c("bmi", "seqn"))])
+    test_y = test$bmi  
+    
+    cv.ridge = cv.glmnet(train_x,train_y,alpha = 0,family = 'binomial',
+                          standardize=TRUE,grouped=FALSE,nfolds = 10)
+    coef_ridge=predict(cv.ridge, s = "lambda.min", type = "coefficients")
+    
+    y_predicted_pro_ridge = predict(cv.ridge,s=cv.ridge$lambda.min,newx=test_x)
+    
+    y_predicted_ridge = exp(y_predicted_pro_ridge)/(1+exp(y_predicted_pro_ridge))
+    y_predicted_ridge = as.numeric(y_predicted_ridge)
+    
+    auc_ridge = auc(test_y, y_predicted_ridge)
+    
+    inter.auc = data.frame(auc_ridge = auc_ridge)
+    auc = rbind(auc, inter.auc) 
+  }  
+  return(auc=auc)
+}
+
+auc_demo_only = model_auc(data_demo_only, sim = 10)
+auc_base = model_auc(data_wide, sim = 10)
+#auc_EntroGPT1536 = model_auc(data_gpt1536_entropy, sim = 10)
+auc_EntroGPT50 = model_auc(data_gpt50_entropy, sim = 10)
+auc_EntroBERT768 = model_auc(data_bert768_entropy, sim = 10)
+auc_EntroBERT50 = model_auc(data_bert50_entropy, sim = 10)
+auc_EntroCohere1024 = model_auc(data_cohere1024_entropy, sim = 10)
+auc_EntroCohere50 = model_auc(data_cohere50_entropy, sim = 10)
+auc_MOMENT1024 = model_auc(data_moment1024, sim = 10)
+auc_MOMENT50 = model_auc(data_moment50, sim = 10)
+
+auc_table = data.frame(
+  Model = c("Demographic Only", "Baseline", "EntroGPT50", "EntroBERT768", 
+                 "EntroBERT50", "EntroCohere1024", "EntroCohere50", "MOMENT1024",
+            "MOMENT50"),
+  AUC = c(mean(auc_demo_only$auc_ridge), mean(auc_base$auc_ridge),
+          mean(auc_EntroGPT50$auc_ridge), 
+          mean(auc_EntroBERT768$auc_ridge), mean(auc_EntroBERT50$auc_ridge),
+          mean(auc_EntroCohere1024$auc_ridge), mean(auc_EntroCohere50$auc_ridge), 
+          mean(auc_MOMENT1024$auc_ridge), mean(auc_MOMENT50$auc_ridge)))
+auc_table
+```
+
+
+## Plot for comparison 
+
+```{r} 
+# plot AUC 
+
+AUC_ridge = cbind(auc_demo_only, auc_base, auc_EntroGPT50, 
+                  auc_EntroBERT768, auc_EntroBERT50, 
+                  auc_EntroCohere1024, auc_EntroCohere50, 
+                  auc_MOMENT1024, auc_MOMENT50)
+
+colnames(AUC_ridge) = c("Demographic Only", "Baseline", "EntroGPT50", 
+                        "EntroBERT768", "EntroBERT50", 
+                        "EntroCohere1024", "EntroCohere50", 
+                        "MOMENT1024", "MOMENT50")
+
+AUC_ridge = AUC_ridge |>
+  mutate(across(everything(), as.numeric)) |> 
+  pivot_longer(cols = everything(),  
+               names_to = "Model",  
+               values_to = "AUC") 
+
+AUC_ridge$Model = factor(AUC_ridge$Model, 
+                         levels = c("Demographic Only", "Baseline", "EntroGPT50", 
+                        "EntroBERT768", "EntroBERT50", 
+                        "EntroCohere1024", "EntroCohere50", 
+                        "MOMENT1024", "MOMENT50"))
+
+ggplot(AUC_ridge, aes(x = Model, y = AUC, fill = Model)) +
+  geom_boxplot() +
+  theme(
+    legend.text = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.spacing.x = unit(2, "cm"),
+    panel.grid.major = element_line(colour = "grey80", size = 0.5),  
+    panel.grid.minor = element_line(colour = "grey90", size = 0.25)  
+  )  
+
+
+######## ROC plot.
+model_f1 = function(data, seed, interval) {
+  
+  set.seed(seed)
+  select_train = sample(nrow(data), floor(nrow(data)*0.8), replace = FALSE)
+  train = data[select_train,]
+  test = data[-select_train,]
+  
+  train_x = as.matrix(train[, !(names(train) %in% c("bmi", "seqn"))])
+  train_y = train$bmi
+  test_x = as.matrix(test[, !(names(test) %in% c("bmi", "seqn"))])
+  test_y = test$bmi 
+  
+  cv.fit = cv.glmnet(train_x, train_y, alpha = 0, family = 'binomial',
+                      standardize=TRUE,grouped=FALSE,nfolds = 10)
+  # use ridge: alpha = 0 
+  # coef_ridge=predict(cv.ridge, s = "lambda.min", type = "coefficients")
+  
+  y_predicted_pro = predict(cv.fit, s = cv.fit$lambda.min, newx = test_x)
+  
+  y_predicted = exp(y_predicted_pro)/(1+exp(y_predicted_pro))
+  y_predicted = as.numeric(y_predicted)
+  
+  roc = pROC::roc(test_y, y_predicted)
+  
+  # Initialize variables to store the best cutoff and the best F1 score
+  best_cutoff = 0
+  best_f1 = 0
+  
+  # Try different cutoff values to find the one that maximizes the F1 score
+  for (cutoff in seq(0.5, 1, by = interval)) {
+    y_hat = ifelse(y_predicted >= cutoff, 1, 0)
+    f1 = F1_Score(y_hat, test_y)
+    if (!is.na(f1) && f1 > best_f1) {
+      best_f1 <- f1
+      best_cutoff <- cutoff
+    }
+  }
+  
+  # calculate true positive, false positive, precision and recall based on maximum F1 score
+  maxF1_y_hat = ifelse(y_predicted >= best_cutoff, 1, 0)
+  maxF1_confusion = confusionMatrix(factor(maxF1_y_hat, levels=c(0, 1)), 
+                                    factor(test_y, levels=c(0, 1)))$table
+  maxF1_precision = maxF1_confusion[2, 2] / sum(maxF1_confusion[2, ])
+  maxF1_recall = maxF1_confusion[2, 2] / sum(maxF1_confusion[, 2])
+  maxF1_TP = maxF1_confusion[2, 2]
+  maxF1_FP = maxF1_confusion[2, 1]
+  
+  return(list(roc = roc, best_cutoff = best_cutoff, best_f1 = best_f1, 
+              maxF1_precision = maxF1_precision, maxF1_recall = maxF1_recall, 
+              maxF1_TP = maxF1_TP, maxF1_FP = maxF1_FP))
+}
+
+
+F1_Score = function(y_hat,y_true) {
+  confusion = confusionMatrix(factor(y_hat, levels = c(0, 1)), 
+                              factor(y_true, levels=c(0, 1)))$table
+  precision = confusion[2, 2] / sum(confusion[2, ])
+  recall = confusion[2, 2] / sum(confusion[, 2])
+  f1 = 2 * (precision * recall) / (precision + recall)
+  return(f1)
+}
+
+f1_demo_only = model_f1(data_demo_only, seed=1, interval=0.01)
+f1_base = model_f1(data_wide, seed=1, interval=0.01)
+#f1_EntroGPT1536 <- model_f1(data_gpt1536_entropy, seed=1, interval=0.01)
+f1_EntroGPT50 = model_f1(data_gpt50, seed=1, interval=0.01)
+f1_EntroBERT768 = model_f1(data_bert768, seed=1, interval=0.01)
+f1_EntroBERT50 <- model_f1(data_bert50, seed=1, interval=0.01)
+f1_EntroCohere1024 <- model_f1(data_cohere1024, seed=1, interval=0.01)
+f1_EntroCohere50 <- model_f1(data_cohere50, seed=1, interval=0.01)
+f1_MOMENT1024 <- model_f1(data_moment1024, seed=1, interval=0.01)
+f1_MOMENT50 <- model_f1(data_moment50, seed=1, interval=0.01)
+
+f1_file_names <- list(
+  f1_demo_only = "f1_demo_only",
+  f1_base = "f1_base",
+  f1_EntroGPT50 = "f1_EntroGPT50",
+  f1_EntroBERT768 = "f1_EntroBERT768",
+  f1_EntroBERT50 = "f1_EntroBERT50",
+  f1_EntroCohere1024 = "f1_EntroCohere1024",
+  f1_EntroCohere50 = "f1_EntroCohere50", 
+  f1_MOMENT1024 = "f1_MOMENT1024", 
+  f1_MOMENT50 = "f1_MOMENT50"
+)
+
+roc <- function(Model, filename) {
+  data.frame(
+    specificity = Model[["roc"]][["specificities"]],
+    sensitivity = Model[["roc"]][["sensitivities"]],
+    Model = filename)
+}
+
+roc_list <- list()
+
+for (var_name in f1_file_names) {
+  model_data <- get(var_name)
+  filename_prefix <- sub("^f1_", "", var_name)
+  filename <- filename_prefix
+  roc_list[[filename]] <- roc(model_data, filename_prefix)
+}
+
+new_model_names <- c("Demographic Only", "Baseline", "EntroGPT50", 
+                        "EntroBERT768", "EntroBERT50", 
+                        "EntroCohere1024", "EntroCohere50", 
+                        "MOMENT1024", "MOMENT50")
+
+names(roc_list) <- new_model_names 
+
+for (i in seq_along(roc_list)) {
+  roc_list[[i]]$Model <- new_model_names[i]
+}
+
+roc_data <- do.call(rbind, roc_list)
+
+roc_data$Model <- factor(roc_data$Model, 
+                         levels = c("Demographic Only", "Baseline", "EntroGPT50", 
+                        "EntroBERT768", "EntroBERT50", 
+                        "EntroCohere1024", "EntroCohere50", 
+                        "MOMENT1024", "MOMENT50"))
+
+ggplot(roc_data, aes(x = specificity, y = sensitivity, color = Model)) +
+  geom_line() +
+  theme( 
+    legend.spacing.x = unit(2, "cm"),
+    legend.justification = "left",   
+    legend.box.just = "left",        
+    legend.text = element_text(hjust = 0),
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank()         
+  ) +
+  labs(x = "Specificity", y = "Sensitivity") 
+```
+
+
+
+
+
+
+
+
+

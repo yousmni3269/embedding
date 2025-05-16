@@ -1,0 +1,749 @@
+---
+title: "embedding visualization"
+output: html_document
+---
+
+# Embedding Visualization 
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readr)
+library(Rtsne)
+library(ggplot2)
+library(corrplot)
+library(factoextra)
+```
+
+## Data import 
+Continued from embedding_evaluating.Rmd 
+### 1. Import the data 
+```{r data_import}
+# initial data
+data_wide = read_csv("./data/data_wide.csv") |>
+  mutate(gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education), 
+         married = as.character(married)) |>
+  dplyr::select(-1)
+
+# dataset with only demographic variables
+data_demo_only = data_wide |>
+  select(seqn, gender, age, race, education, married, pir, bmi) 
+```
+
+### 2. Import the embedding data for other models 
+```{r embedding_import}
+# GPT with 1536 embedding dimension 
+data_gpt1536 = read.csv("./data2/data_wide_embedding_gpt1536.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined)
+
+data_gpt1536$embedding = gsub("\\[", "", data_gpt1536$embedding)
+data_gpt1536$embedding = gsub("\\]", "", data_gpt1536$embedding)
+
+data_gpt1536 = data_gpt1536 |>
+  separate(embedding, into = paste0("var", 1:1536), sep = ",\\s*", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education), 
+         married = as.character(married))
+
+# GPT with 50 embedding dimension
+data_gpt50 = read.csv("./data2/data_wide_embedding_gpt50.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married)) 
+
+# BERT with 768 embedding dimension
+data_bert768 = read.csv("./data2/data_wide_embedding_bert768.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined)
+
+data_bert768$embedding <- gsub("\\[", "", data_bert768$embedding)
+data_bert768$embedding <- gsub("\\]", "", data_bert768$embedding)
+data_bert768$embedding <- gsub("\n", " ", data_bert768$embedding)
+
+data_bert768 = data_bert768 |>
+  mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
+         embedding = str_replace_all(embedding, "\\s+", " ")) |> # Replace multiple spaces with a single space 
+  separate(embedding, into = paste0("var", 1:768), sep = "\\s+", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education), 
+         married = as.character(married)) 
+
+
+# BERT with 50 embedding dimension
+data_bert50 = read.csv("./data2/data_wide_embedding_bert50.csv") %>% 
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married))
+
+
+# Cohere with 1024 embedding dimension
+data_cohere1024 = read.csv("./data2/data_wide_embedding_cohere1024.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-n_tokens)
+
+data_cohere1024$embedding = gsub("\\[", "", data_cohere1024$embedding) 
+data_cohere1024$embedding = gsub("\\]", "", data_cohere1024$embedding)
+data_cohere1024$embedding = gsub(",", " ", data_cohere1024$embedding)
+
+data_cohere1024 = data_cohere1024 |> 
+  mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
+         embedding = str_replace_all(embedding, "\\s+", " ")) |> # Replace multiple spaces with a single space
+  separate(embedding, into = paste0("var", 1:1024), sep = "\\s+", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+        race = as.character(race), 
+        education = as.character(education), 
+        married = as.character(married))
+  
+
+# Cohere with 50 embedding dimension
+data_cohere50 = read.csv("./data2/data_wide_embedding_cohere50.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married))
+```
+
+### 3. Get the entropy  
+```{r}
+# Entropy
+data_entropy = read.csv("./data/data_wide_entropy.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(marital_status))
+
+# GPT1536 + entropy
+data_gpt1536_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_gpt1536, by = "seqn")
+
+# GPT50 + entropy
+data_gpt50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_gpt50, by = "seqn")
+
+# BERT768 + entropy
+data_bert768_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_bert768, by = "seqn")
+
+# BERT50 + entropy
+data_bert50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_bert50, by = "seqn")
+
+# Cohere1024 + entropy
+data_cohere1024_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_cohere1024, by = "seqn")
+
+# Cohere50 + entropy
+data_cohere50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_cohere50, by = "seqn")
+```
+
+### 4. Get MOMENT embeddings and combine the subsets into one 
+```{r}
+# MOMENT with 1024 embedding dimension  
+data_moment1_1024 = read.csv("./data/embeddings_moment_subset1_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+data_moment2_1024 = read.csv("./data/embeddings_moment_subset2_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+data_moment1024 = rbind(data_moment1_1024, data_moment2_1024)
+
+# MOMENT with 50 embedding dimension 
+data_moment1_50 = read_csv("./data/embeddings_moment_subset1_50.csv") |>
+  janitor::clean_names() |>
+  select(-x1) |>
+  rename(x1 = x1_2) |>
+  arrange(seqn) 
+
+data_moment2_50 = read_csv("./data/embeddings_moment_subset2_50.csv") |>
+  janitor::clean_names() |>
+  select(-x1) |>
+  rename(x1 = x1_2) |>
+  arrange(seqn) 
+
+data_moment50 = rbind(data_moment1_50, data_moment2_50)
+```
+
+### 5. Get MOMENT RAW DATA embeddings 
+```{r}
+# MOMENT raw data embedding with 1024 dimension  
+data_moment_raw1_1024 = read.csv("./data/embeddings_moment_raw_subset1_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn)
+
+data_moment_raw2_1024 = read.csv("./data/embeddings_moment_raw_subset2_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+data_moment_raw1024 = rbind(data_moment_raw1_1024, data_moment_raw2_1024)
+```
+
+### 6. Get MOMENT RAW RECODED embeddings 
+```{r}
+# MOMENT raw recoded embedding with 1024 dimension  
+data_moment_recoded1_1024 = read.csv("./data/embeddings_moment_recoded_subset1_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn)
+
+data_moment_recoded2_1024 = read.csv("./data/embeddings_moment_recoded_subset2_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+data_moment_recoded1024 = rbind(data_moment_recoded1_1024, data_moment_recoded2_1024)
+```
+
+
+
+## Visualization 
+
+### 1. PCA of full dimension models 
+```{r PCA_gpt1536}
+# separate into embeddings/entropy and covariates/response
+dat_entrogpt_1 = data_gpt1536_entropy[, c(2:8, 16:1551)]
+dat_entrogpt_2 = data_gpt1536_entropy[, c(1,9:15)]
+
+dat_entrogpt_1 = as.data.frame(scale(dat_entrogpt_1))
+dat_entrogpt_1$seqn = data_gpt1536_entropy$seqn
+
+dat_entrogpt_combined = dat_entrogpt_1 |>
+  left_join(dat_entrogpt_2, by = "seqn") |>
+  mutate(gender = as.numeric(gender), 
+         race = as.numeric(race), 
+         education = as.numeric(education), 
+         married = as.numeric(married))
+
+pca_entrogpt_vars = names(dat_entrogpt_combined)[names(dat_entrogpt_combined) != "seqn"]
+pca_entrogpt = prcomp(dat_entrogpt_combined[, pca_entrogpt_vars], scale. = TRUE)
+
+fviz_pca_ind(pca_entrogpt, 
+             habillage = ifelse(dat_entrogpt_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+```
+
+```{r PCA_bert768}
+# separate into embeddings/entropy and covariates/response
+dat_entrobert_1 = data_bert768_entropy[, c(2:8, 16:783)]
+dat_entrobert_2 = data_bert768_entropy[, c(1,9:15)]
+
+dat_entrobert_1 = as.data.frame(scale(dat_entrobert_1))
+dat_entrobert_1$seqn = data_bert768_entropy$seqn
+
+dat_entrobert_combined = dat_entrobert_1 |>
+  left_join(dat_entrobert_2, by = "seqn") |>
+  mutate(gender = as.numeric(gender), 
+         race = as.numeric(race), 
+         education = as.numeric(education), 
+         married = as.numeric(married))
+
+pca_entrobert_vars = names(dat_entrobert_combined)[names(dat_entrobert_combined) != "seqn"]
+pca_entrobert = prcomp(dat_entrobert_combined[, pca_entrobert_vars], scale. = TRUE)
+
+fviz_pca_ind(pca_entrobert, 
+             habillage = ifelse(dat_entrobert_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+```
+
+```{r PCA_cohere1024}
+# separate into embeddings/entropy and covariates/response
+dat_entrocohere_1 = data_cohere1024_entropy[, c(2:8, 16:1039)]
+dat_entrocohere_2 = data_cohere1024_entropy[, c(1,9:15)]
+
+dat_entrocohere_1 = as.data.frame(scale(dat_entrocohere_1))
+dat_entrocohere_1$seqn = data_cohere1024_entropy$seqn
+
+dat_entrocohere_combined = dat_entrocohere_1 |>
+  left_join(dat_entrocohere_2, by = "seqn") |>
+  mutate(gender = as.numeric(gender), 
+         race = as.numeric(race), 
+         education = as.numeric(education), 
+         married = as.numeric(married))
+
+pca_entrocohere_vars = names(dat_entrocohere_combined)[names(dat_entrocohere_combined) != "seqn"]
+pca_entrocohere = prcomp(dat_entrocohere_combined[, pca_entrocohere_vars], scale. = TRUE)
+
+fviz_pca_ind(pca_entrocohere, 
+             habillage = ifelse(dat_entrocohere_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+```
+
+```{r PCA_moment1024}
+# grouping by age? young (20–39), middle (40–64), older (65+) 
+data_moment1024 = data_moment1024 |>
+  mutate(age_cat = case_when(
+    age >= 20 & age <= 39 ~ 0,
+    age >= 40 & age <= 64 ~ 1,
+    age >= 65             ~ 2))
+
+# separate into embeddings/entropy and covariates/response
+dat_moment_1 = data_moment1024[, c(9:1032)]
+dat_moment_2 = data_moment1024[, c(1:8, 1033)]
+
+dat_moment_1 = as.data.frame(scale(dat_moment_1))
+dat_moment_1$seqn = data_moment1024$seqn
+
+dat_moment_combined = dat_moment_1 |>
+  left_join(dat_moment_2, by = "seqn")
+
+pca_moment_vars = names(dat_moment_combined)[names(dat_moment_combined) != "seqn"]
+pca_moment = prcomp(dat_moment_combined[, pca_moment_vars], scale. = TRUE)
+
+fviz_pca_ind(pca_moment, 
+             habillage = ifelse(dat_moment_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+```
+
+```{r PCA_moment_raw1024}
+# grouping by age? young (20–39), middle (40–64), older (65+) 
+data_moment_raw1024 = data_moment_raw1024 |>
+  mutate(age_cat = case_when(
+    age >= 20 & age <= 39 ~ 0,
+    age >= 40 & age <= 64 ~ 1,
+    age >= 65             ~ 2))
+
+# separate into embeddings/entropy and covariates/response
+dat_moment_raw1 = data_moment_raw1024[, c(9:1032)]
+dat_moment_raw2 = data_moment_raw1024[, c(1:8, 1033)]
+
+dat_moment_raw1 = as.data.frame(scale(dat_moment_raw1))
+dat_moment_raw1$seqn = data_moment_raw1024$seqn
+
+dat_moment_raw_combined = dat_moment_raw1 |>
+  left_join(dat_moment_raw2, by = "seqn")
+
+pca_moment_raw_vars = names(dat_moment_raw_combined)[names(dat_moment_raw_combined) != "seqn"]
+pca_moment_raw = prcomp(dat_moment_raw_combined[, pca_moment_raw_vars], scale. = TRUE)
+
+fviz_pca_ind(pca_moment_raw, 
+             habillage = ifelse(dat_moment_raw_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+```
+
+```{r PCA_moment_recoded1024}
+# grouping by age? young (20–39), middle (40–64), older (65+) 
+data_moment_recoded1024 = data_moment_recoded1024 |>
+  mutate(age_cat = case_when(
+    age >= 20 & age <= 39 ~ 0,
+    age >= 40 & age <= 64 ~ 1,
+    age >= 65             ~ 2))
+
+# separate into embeddings/entropy and covariates/response
+dat_moment_recoded1 = data_moment_recoded1024[, c(9:1032)]
+dat_moment_recoded2 = data_moment_recoded1024[, c(1:8, 1033)]
+
+dat_moment_recoded1 = as.data.frame(scale(dat_moment_recoded1))
+dat_moment_recoded1$seqn = data_moment_recoded1024$seqn
+
+dat_moment_recoded_combined = dat_moment_recoded1 |>
+  left_join(dat_moment_raw2, by = "seqn")
+
+pca_moment_recoded_vars = names(dat_moment_recoded_combined)[names(dat_moment_recoded_combined) != "seqn"]
+pca_moment_recoded = prcomp(dat_moment_recoded_combined[, pca_moment_recoded_vars], scale. = TRUE)
+
+fviz_pca_ind(pca_moment_recoded, 
+             habillage = ifelse(dat_moment_recoded_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+```
+
+### 2. t_SNE of full dimension models 
+```{r t_SNE_GPT}
+set.seed(1) 
+dat_tsne_entrogpt = dat_entrogpt_combined[, pca_entrogpt_vars]
+
+tsne_entrogpt = Rtsne(as.matrix(dat_tsne_entrogpt), dims = 2, perplexity = 30)
+
+tsne_entrogpt_df = data.frame(
+  tSNE1 = tsne_entrogpt$Y[,1],
+  tSNE2 = tsne_entrogpt$Y[,2],
+  bmi = ifelse(dat_entrogpt_combined$bmi == 1, "BMI>25", "Otherwise"))
+
+ggplot(tsne_entrogpt_df, aes(x = tSNE1, y = tSNE2, color = bmi)) +
+  geom_point() +
+  labs(title = "t-SNE of Embeddings from EntroGPT",
+       x = "t-SNE Dimension 1",
+       y = "t-SNE Dimension 2") +
+  theme_minimal()
+```
+
+```{r t_SNE_BERT}
+set.seed(1) 
+dat_tsne_entrobert = dat_entrobert_combined[, pca_entrobert_vars]
+
+tsne_entrobert = Rtsne(as.matrix(dat_tsne_entrobert), dims = 2, perplexity = 30)
+
+tsne_entrobert_df = data.frame(
+  tSNE1 = tsne_entrobert$Y[,1],
+  tSNE2 = tsne_entrobert$Y[,2],
+  bmi = ifelse(dat_entrobert_combined$bmi == 1, "BMI>25", "Otherwise"))
+
+ggplot(tsne_entrobert_df, aes(x = tSNE1, y = tSNE2, color = bmi)) +
+  geom_point() +
+  labs(title = "t-SNE of Embeddings from EntroBERT",
+       x = "t-SNE Dimension 1",
+       y = "t-SNE Dimension 2") +
+  theme_minimal()
+```
+
+```{r t_SNE_Cohere}
+set.seed(1) 
+dat_tsne_entrocohere = dat_entrocohere_combined[, pca_entrocohere_vars]
+
+tsne_entrocohere = Rtsne(as.matrix(dat_tsne_entrocohere), dims = 2, perplexity = 30)
+
+tsne_entrocohere_df = data.frame(
+  tSNE1 = tsne_entrocohere$Y[,1],
+  tSNE2 = tsne_entrocohere$Y[,2],
+  bmi = ifelse(dat_entrocohere_combined$bmi == 1, "BMI>25", "Otherwise"))
+
+ggplot(tsne_entrocohere_df, aes(x = tSNE1, y = tSNE2, color = bmi)) +
+  geom_point() +
+  labs(title = "t-SNE of Embeddings from EntroCohere",
+       x = "t-SNE Dimension 1",
+       y = "t-SNE Dimension 2") +
+  theme_minimal()
+```
+
+```{r t_SNE_MOMENT}
+set.seed(1) 
+dat_tsne_moment = dat_moment_combined[, pca_moment_vars]
+
+tsne_moment = Rtsne(as.matrix(dat_tsne_moment), dims = 2, perplexity = 30)
+
+tsne_moment_df = data.frame(
+  tSNE1 = tsne_moment$Y[,1],
+  tSNE2 = tsne_moment$Y[,2],
+  bmi = ifelse(dat_moment_combined$bmi == 1, "BMI>25", "Otherwise"))
+
+ggplot(tsne_moment_df, aes(x = tSNE1, y = tSNE2, color = bmi)) +
+  geom_point() +
+  labs(title = "t-SNE of Embeddings from MOMENT",
+       x = "t-SNE Dimension 1",
+       y = "t-SNE Dimension 2") +
+  theme_minimal()
+```
+
+```{r function, eval=FALSE}
+run_embedding_analysis = function(data, embedding_cols, covariate_cols, id_col = "seqn", 
+                                   response_col = "bmi", response_threshold = 1,
+                                   response_labels = c("BMI>25", "Otherwise")) {
+  
+  dat_embeddings = data[, embedding_cols]
+  dat_covariates = data[, c(id_col, covariate_cols, response_col)]
+  
+  dat_embeddings_scaled = as.data.frame(scale(data_embeddings))
+  
+  dat_embeddings_scaled[[id_col]] = data[[id_col]]
+  
+  dat_combined = dat_embeddings_scaled |>
+    left_join(dat_covariates, by = id_col)
+  
+  # pca 
+  pca_vars = names(dat_combined)[names(dat_combined) != id_col]
+  pca_result = prcomp(dat_combined[, pca_vars], scale. = TRUE)
+  
+  response_factor = ifelse(dat_combined[[response_col]] == response_threshold, 
+                           response_labels[1], response_labels[2])
+  
+  pca_viz = fviz_pca_ind(pca_result, habillage = response_factor, label = c("var"))
+  
+  pca_scores = as.data.frame(pca_result$x)
+  pca_scores[[response_col]] = response_factor
+  
+  # t-SNE
+  set.seed(1)
+  tsne_result <- Rtsne(as.matrix(dat_combined[, pca_vars]), 
+                       dims = 2, perplexity = min(30, nrow(data)/4), 
+                       verbose = TRUE, max_iter = 1000)
+  
+  # Create t-SNE data frame
+  tsne_df = data.frame(
+    tSNE1 = tsne_result$Y[,1],
+    tSNE2 = tsne_result$Y[,2],
+    response = response_factor
+  )
+  
+  # Return results as a list
+  return(list(
+    combined_data = dat_combined,
+    pca_result = pca_result,
+    pca_viz = pca_viz,
+    pca_scores = pca_scores,
+    tsne_result = tsne_result,
+    tsne_df = tsne_df
+  ))
+}
+```
+
+
+### 3. Check PCA with 20 dimensions 
+```{r, eval=FALSE}
+# EntroGPT
+pca_entrogpt_20 = prcomp(dat_entrogpt_combined[, pca_entrogpt_vars], scale. = TRUE, rank = 20)
+
+fviz_pca_ind(pca_entrogpt_20, 
+             habillage = ifelse(dat_entrogpt_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+
+# EntroBERT
+pca_entrobert_20 = prcomp(dat_entrobert_combined[, pca_entrobert_vars], scale. = TRUE, rank = 20)
+
+fviz_pca_ind(pca_entrobert_20, 
+             habillage = ifelse(dat_entrogpt_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+
+# EntroCOHERE
+pca_entrocohere_20 = prcomp(dat_entrocohere_combined[, pca_entrocohere_vars], scale. = TRUE, rank = 20)
+
+fviz_pca_ind(pca_entrocohere_20, 
+             habillage = ifelse(dat_entrocohere_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+
+# MOMENT
+pca_moment_20 = prcomp(dat_moment_combined[, pca_moment_vars], scale. = TRUE, rank = 20)
+
+fviz_pca_ind(pca_moment_20, 
+             habillage = ifelse(dat_moment_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+
+```
+
+
+### 4. PCA of the original data by bmi, gender, race, etc. 
+```{r}
+dat_original = read.csv("./data/data_wide.csv")
+
+# separate into embeddings/entropy and covariates/response
+dat_original_1 = dat_original[, c(10:2025)]
+dat_original_2 = dat_original[, c(2:9)]
+
+dat_original_1 = as.data.frame(scale(dat_original_1))
+dat_original_1$seqn = dat_original$seqn
+
+dat_original_combined = dat_original_1 |>
+  left_join(dat_original_2, by = "seqn")
+
+pca_original_vars = names(dat_original_combined)[names(dat_original_combined) != "seqn"]
+pca_original = prcomp(dat_original_combined[, pca_original_vars], scale. = TRUE)
+
+#pca_original_scores = as.data.frame(pca_original$x)
+#pca_original_scores$bmi = ifelse(dat_original_combined$bmi == 1, "BMI>25", "Otherwise")
+#ggplot(pca_original_scores, aes(x = PC1, y = PC2, color = bmi)) +
+  #geom_point(alpha = 0.8) +
+  #labs(title = "PCA of Original Data per BMI",
+       #x = paste0("PC1 (", round(summary(pca_original)$importance[2,1] * 100, 1), "%)"),
+       #y = paste0("PC2 (", round(summary(pca_original)$importance[2,2] * 100, 1), "%)"),
+       #color = "BMI status") +
+  #theme_minimal() 
+
+
+# color by response (bmi)
+fviz_pca_ind(pca_original, 
+             habillage = ifelse(dat_original_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+
+# color by gender
+fviz_pca_ind(pca_original, 
+             habillage = ifelse(dat_original_combined$gender==1, "male", "female"), 
+             label = c("var"))
+
+# color by race
+fviz_pca_ind(pca_original, 
+             habillage = factor(dat_original_combined$race,
+                               levels = 1:5,
+                               labels = c("Mexican American", "Other Hispanic", 
+                                         "Non-Hispanic White", "Non-Hispanic Black", 
+                                         "Other")), 
+             label = c("var"))
+
+# color by education
+fviz_pca_ind(pca_original, 
+             habillage = factor(dat_original_combined$education,
+                               levels = 1:5,
+                               labels = c("less than 9th grade", "9-11th grade", 
+                                         "high school grad/GED or equivalent", 
+                                         "some college or associates (AA) degree,", 
+                                         "college graduate or higher")), 
+             label = c("var"))
+
+# color by married status
+fviz_pca_ind(pca_original, 
+             habillage = factor(dat_original_combined$married,
+                               levels = 1:6,
+                               labels = c("married", "widowed", 
+                                         "divorced", "separated",
+                                         "never married", "living with partner")),
+             label = c("var"))
+```
+
+
+### 5. PCA of the moment embedding by bmi, gender, race 
+```{r}
+# color by response (bmi)
+fviz_pca_ind(pca_moment, 
+             habillage = ifelse(dat_moment_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+
+# color by gender
+fviz_pca_ind(pca_moment, 
+             habillage = ifelse(dat_moment_combined$gender==1, "male", "female"), 
+             label = c("var"))
+
+# color by race
+fviz_pca_ind(pca_moment, 
+             habillage = factor(dat_moment_combined$race,
+                               levels = 1:5,
+                               labels = c("Mexican American", "Other Hispanic", 
+                                         "Non-Hispanic White", "Non-Hispanic Black", 
+                                         "Other")), 
+             label = c("var"))
+
+# color by education
+fviz_pca_ind(pca_moment, 
+             habillage = factor(dat_moment_combined$education,
+                               levels = 1:5,
+                               labels = c("less than 9th grade", "9-11th grade", 
+                                         "high school grad/GED or equivalent", 
+                                         "some college or associates (AA) degree,", 
+                                         "college graduate or higher")), 
+             label = c("var"))
+
+# color by married status
+fviz_pca_ind(pca_moment, 
+             habillage = factor(dat_moment_combined$married,
+                               levels = 1:6,
+                               labels = c("married", "widowed", 
+                                         "divorced", "separated",
+                                         "never married", "living with partner")),
+             label = c("var"))
+
+# color by age
+fviz_pca_ind(pca_moment, 
+             habillage = factor(dat_moment_combined$age_cat,
+                               levels = 0:2,
+                               labels = c("young", "middle", 
+                                         "older")),
+             label = c("var"))
+```
+
+
+### 6. PCA of the raw data moment embedding  
+```{r}
+# color by response (bmi)
+fviz_pca_ind(pca_moment_raw, 
+             habillage = ifelse(dat_moment_raw_combined$bmi==1, "BMI>25", "Otherwise"), 
+             label = c("var"))
+
+# color by gender
+fviz_pca_ind(pca_moment_raw, 
+             habillage = ifelse(dat_moment_raw_combined$gender==1, "male", "female"), 
+             label = c("var"))
+
+# color by race
+fviz_pca_ind(pca_moment_raw, 
+             habillage = factor(dat_moment_raw_combined$race,
+                               levels = 1:5,
+                               labels = c("Mexican American", "Other Hispanic", 
+                                         "Non-Hispanic White", "Non-Hispanic Black", 
+                                         "Other")), 
+             label = c("var"))
+
+# color by education
+fviz_pca_ind(pca_moment_raw, 
+             habillage = factor(dat_moment_raw_combined$education,
+                               levels = 1:5,
+                               labels = c("less than 9th grade", "9-11th grade", 
+                                         "high school grad/GED or equivalent", 
+                                         "some college or associates (AA) degree,", 
+                                         "college graduate or higher")), 
+             label = c("var"))
+
+# color by married status
+fviz_pca_ind(pca_moment_raw, 
+             habillage = factor(dat_moment_raw_combined$married,
+                               levels = 1:6,
+                               labels = c("married", "widowed", 
+                                         "divorced", "separated",
+                                         "never married", "living with partner")),
+             label = c("var"))
+
+# color by age
+fviz_pca_ind(pca_moment_raw, 
+             habillage = factor(dat_moment_raw_combined$age_cat,
+                               levels = 0:2,
+                               labels = c("young", "middle", 
+                                         "older")),
+             label = c("var"))
+```
+
+
+### 7. K-means clustering of the original data 
+```{r}
+fviz_nbclust(dat_original_combined, 
+             FUNcluster = kmeans, 
+             method = "silhouette")
+
+# optimal k = 2 
+
+km_original = kmeans(dat_original_combined, center = 2, nstart = 20)
+
+km_original_vis = 
+  fviz_cluster(list(data = dat_original_combined, cluster = km_original$cluster), 
+               geom = c("point", "text"), 
+               labelsize = 5, 
+               palette = "Dark2") + 
+  labs(title = "K-means of the original data")
+```
+
+
+### 8. K-means clustering of the moment embedding 
+
+```{r}
+fviz_nbclust(dat_moment_combined, 
+             FUNcluster = kmeans, 
+             method = "silhouette")
+
+# optimal k = 2 
+
+km_moment = kmeans(dat_moment_combined, center = 2, nstart = 20)
+
+km_moment_vis = 
+  fviz_cluster(list(data = dat_moment_combined, cluster = km_original$cluster), 
+               geom = c("point", "text"), 
+               labelsize = 5, 
+               palette = "Dark2") + 
+  labs(title = "K-means of the moment embedding")
+```

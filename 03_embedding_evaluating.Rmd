@@ -1,0 +1,405 @@
+---
+title: "embedding evaluation"
+output: html_document
+---
+
+# Embedding Evaluating 
+
+```{r setup, include=FALSE}
+library(glmnet)
+library(dplyr)
+library(lme4)
+library(tidyr)
+library(pROC)
+library(tidyverse)
+library(patchwork)
+library(caret)
+library(tidymodels)
+library(e1071)
+```
+
+## Data import 
+
+### 1. Import the data 
+```{r data_import}
+# initial data
+data_wide = read_csv("./data/data_wide.csv") |>
+  mutate(gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education), 
+         married = as.character(married)) |>
+  dplyr::select(-1)
+
+# dataset with only demographic variables
+data_demo_only = data_wide |>
+  select(seqn, gender, age, race, education, married, pir, bmi) 
+```
+
+### 2. Import the embedding data for other models 
+```{r eval=FALSE}
+# GPT with 1536 embedding dimension - from embedding_comparing.Rmd file 
+data_gpt1536_raw = read.csv("./data2/data_wide_embedding_gpt1536.csv") |>
+  janitor::clean_names() 
+  #mutate(pair_id = rep(1:(n() / 2), each = 2))
+
+demo_gpt = data_gpt1536_raw |>
+  filter(row_number() %% 2 == 1) |>
+  select(seqn, gender, age, race, education, married, pir, bmi, pair_id)
+
+squished_rows = data_gpt1536_raw |>
+  filter(row_number() %% 2 == 1) |>
+  select(embedding, pair_id)
+
+squished_list = squished_rows |>
+  mutate(
+    embedding_vec = map(embedding, function(x) {
+      if (is.na(x)) return(NA)
+      clean_str = str_remove_all(x, "\\[|\\]") |> 
+        str_trim()
+      
+      if (nchar(clean_str) == 0) return(numeric(0))
+      vals = str_split(clean_str, ",\\s*")[[1]]
+      num_vals = suppressWarnings(as.numeric(vals))
+      
+      return(num_vals)
+    })
+  ) |>
+  filter(!map_lgl(embedding_vec, function(v) length(v) == 1 && is.na(v))) |>
+  select(-embedding)
+
+extended_rows = data_gpt1536_raw |>
+  filter(row_number() %% 2 == 0) |>
+  select(-x) |>
+  mutate(across(everything(), ~ str_remove(.x, "]\"$"))) 
+
+colnames(extended_rows)[-which(colnames(extended_rows) == "pair_id")] = 
+  paste0("x", seq_len(ncol(extended_rows) - 1))
+
+extended_rows = extended_rows |>
+  mutate(across(everything(), ~ as.numeric(.x))) 
+
+extended_list = extended_rows |>
+  group_by(pair_id) |>
+  summarize(embedding_vec2 = list(as.numeric(unlist(across(where(is.numeric)))))
+  )
+
+demo_squish = demo_gpt |>
+  left_join(squished_list, by = "pair_id")
+  
+data_gpt1536_long = demo_squish |>
+  left_join(extended_list, by = "pair_id") |>
+  mutate(c_embedding = map2(embedding_vec, embedding_vec2, c)) |>
+  select(-embedding_vec, -embedding_vec2) |>
+  unnest(c_embedding) |>
+  group_by(seqn) |>
+  mutate(var_id = row_number()) |>
+  ungroup()
+
+data_gpt1536 = data_gpt1536_long |>
+  pivot_wider(
+    names_from = var_id, 
+    values_from = c_embedding, 
+    names_prefix = "var"
+  ) |>
+  select(seqn, gender, age, race, education, married, pir, bmi, var1:var1536)
+
+```
+
+```{r embedding_import}
+# GPT with 1536 embedding dimension 
+data_gpt1536 = read.csv("./data2/data_wide_embedding_gpt1536.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined)
+
+data_gpt1536$embedding = gsub("\\[", "", data_gpt1536$embedding)
+data_gpt1536$embedding = gsub("\\]", "", data_gpt1536$embedding)
+
+data_gpt1536 = data_gpt1536 |>
+  separate(embedding, into = paste0("var", 1:1536), sep = ",\\s*", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education), 
+         married = as.character(married))
+
+# GPT with 50 embedding dimension
+data_gpt50 = read.csv("./data2/data_wide_embedding_gpt50.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married)) 
+
+# BERT with 768 embedding dimension
+data_bert768 = read.csv("./data2/data_wide_embedding_bert768.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined)
+
+data_bert768$embedding <- gsub("\\[", "", data_bert768$embedding)
+data_bert768$embedding <- gsub("\\]", "", data_bert768$embedding)
+data_bert768$embedding <- gsub("\n", " ", data_bert768$embedding)
+
+data_bert768 = data_bert768 |>
+  mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
+         embedding = str_replace_all(embedding, "\\s+", " ")) |> # Replace multiple spaces with a single space 
+  separate(embedding, into = paste0("var", 1:768), sep = "\\s+", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+         race = as.character(race), 
+         education = as.character(education), 
+         married = as.character(married)) 
+
+
+# BERT with 50 embedding dimension
+data_bert50 = read.csv("./data2/data_wide_embedding_bert50.csv") %>% 
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married))
+
+
+# Cohere with 1024 embedding dimension
+data_cohere1024 = read.csv("./data2/data_wide_embedding_cohere1024.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-n_tokens)
+
+data_cohere1024$embedding = gsub("\\[", "", data_cohere1024$embedding) 
+data_cohere1024$embedding = gsub("\\]", "", data_cohere1024$embedding)
+data_cohere1024$embedding = gsub(",", " ", data_cohere1024$embedding)
+
+data_cohere1024 = data_cohere1024 |> 
+  mutate(embedding = str_trim(embedding),  # Remove leading and trailing spaces
+         embedding = str_replace_all(embedding, "\\s+", " ")) |> # Replace multiple spaces with a single space
+  separate(embedding, into = paste0("var", 1:1024), sep = "\\s+", convert = TRUE) |>
+  mutate(across(starts_with("var"), as.numeric), 
+         gender = as.character(gender), 
+        race = as.character(race), 
+        education = as.character(education), 
+        married = as.character(married))
+  
+
+# Cohere with 50 embedding dimension
+data_cohere50 = read.csv("./data2/data_wide_embedding_cohere50.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x,-combined,-n_tokens) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(married))
+```
+
+### 3. Get the entropy  
+```{r}
+# Entropy
+data_entropy = read.csv("./data/data_wide_entropy.csv") |>
+  janitor::clean_names() |>
+  dplyr::select(-x) |>
+  mutate(
+    gender = as.character(gender), 
+    race = as.character(race), 
+    education = as.character(education), 
+    married = as.character(marital_status))
+
+# GPT1536 + entropy
+data_gpt1536_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_gpt1536, by = "seqn")
+
+# GPT50 + entropy
+data_gpt50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_gpt50, by = "seqn")
+
+# BERT768 + entropy
+data_bert768_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_bert768, by = "seqn")
+
+# BERT50 + entropy
+data_bert50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_bert50, by = "seqn")
+
+# Cohere1024 + entropy
+data_cohere1024_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_cohere1024, by = "seqn")
+
+# Cohere50 + entropy
+data_cohere50_entropy = data_entropy |>
+  dplyr::select(seqn, entropy_day1:entropy_day7) |> 
+  inner_join(data_cohere50, by = "seqn")
+```
+
+### 4. Get MOMENT embeddings and combine the subsets into one 
+```{r}
+# MOMENT with 1024 embedding dimension  
+data_moment1_1024 = read.csv("./data/embeddings_moment_subset1_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+data_moment2_1024 = read.csv("./data/embeddings_moment_subset2_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+data_moment1024 = rbind(data_moment1_1024, data_moment2_1024)
+
+# MOMENT with 50 embedding dimension 
+data_moment1_50 = read_csv("./data/embeddings_moment_subset1_50.csv") |>
+  janitor::clean_names() |>
+  select(-x1) |>
+  rename(x1 = x1_2) |>
+  arrange(seqn) 
+
+data_moment2_50 = read_csv("./data/embeddings_moment_subset2_50.csv") |>
+  janitor::clean_names() |>
+  select(-x1) |>
+  rename(x1 = x1_2) |>
+  arrange(seqn) 
+
+data_moment50 = rbind(data_moment1_50, data_moment2_50)
+```
+
+### 5. Get MOMENT RAW DATA embeddings 
+```{r}
+# MOMENT raw data embedding with 1024 dimension  
+data_moment_raw1_1024 = read.csv("./data/embeddings_moment_raw_subset1_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn)
+
+data_moment_raw2_1024 = read.csv("./data/embeddings_moment_raw_subset2_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+data_moment_raw1024 = rbind(data_moment_raw1_1024, data_moment_raw2_1024)
+```
+
+### 6. Get MOMENT RAW RECODED embeddings 
+```{r}
+# MOMENT raw recoded embedding with 1024 dimension  
+data_moment_recoded1_1024 = read.csv("./data/embeddings_moment_recoded_subset1_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn)
+
+data_moment_recoded2_1024 = read.csv("./data/embeddings_moment_recoded_subset2_1024.csv") |>
+  janitor::clean_names() |>
+  select(-x) |>
+  arrange(seqn) 
+
+data_moment_recoded1024 = rbind(data_moment_recoded1_1024, data_moment_recoded2_1024)
+```
+
+
+
+## SVM of Evaluation 
+
+### 1. MOMENT 
+```{r eval=FALSE}
+set.seed(1)
+data_gpt1536_entropy$bmi = factor(data_gpt1536_entropy$bmi, levels = c("0", "1"), labels = c("class0", "class1"))
+
+data_split = initial_split(data_gpt1536_entropy, prop = 0.8)
+training_data = training(data_split)
+testing_data = testing(data_split)
+
+ctrl = trainControl(method = "cv", number = 5, 
+                    classProbs = TRUE, 
+                    summaryFunction = twoClassSummary, 
+                    savePredictions = TRUE)
+
+entrogpt_svm = train(bmi ~., data = training_data, 
+                   method = "svmRadialCost",   
+                   tuneGrid = expand.grid(C = 1),   
+                   trControl = ctrl,
+                   preProcess = c("center", "scale"),
+                   metric = "ROC")
+
+# Evaluate
+entrogpt_pred_probs = predict(entrogpt_svm, newdata = testing_data, type = "prob")[,2]
+entrogpt_pred_class = predict(entrogpt_svm, newdata = testing_data)
+
+# AUC (for binary classification)
+auc = roc(testing_data$bmi, entrogpt_pred_probs)$auc
+cat("AUC:", round(auc, 3), "\n")
+
+# Accuracy
+acc = mean(entrogpt_pred_class == testing_data$bmi)
+cat("Accuracy:", round(acc, 3), "\n")
+```
+
+### 2. Function 
+```{r}
+model_svm = function(data, sim){ 
+  
+  results = data.frame(
+    auc = numeric(sim),
+    accuracy = numeric(sim),
+    best_c = numeric(sim)
+  )
+  
+  data$bmi = factor(data$bmi, levels = c("0", "1"), labels = c("class0", "class1"))
+
+  for (i in 1:sim){
+    set.seed(i)
+    data_split = initial_split(data, prop = 0.8)
+    training_data = training(data_split)
+    testing_data = testing(data_split)
+    
+    ctrl = trainControl(method = "cv", number = 5, 
+                    classProbs = TRUE, 
+                    summaryFunction = twoClassSummary, 
+                    savePredictions = TRUE)
+    
+    svm = train(bmi ~., data = training_data, 
+                   method = "svmRadialCost",   
+                   tuneGrid = expand.grid(C = 1),  
+                   trControl = ctrl,
+                   preProcess = c("center", "scale"),
+                   metric = "ROC")
+
+    pred_probs = predict(svm, newdata = testing_data, type = "prob")[, 2]
+    pred_class = predict(svm, newdata = testing_data)
+    auc_val = roc(testing_data$bmi, pred_probs)$auc
+    acc_val = mean(pred_class == testing_data$bmi)
+    best_c = svm$bestTune$C
+    
+    results[i, ] = list(auc_val, acc_val, best_c)
+  }
+  return(results)
+}
+
+auc_moment = model_svm(data_moment1024, sim = 3)
+auc_moment_raw = model_svm(data_moment_raw1024, sim = 3)
+auc_moment_recoded = model_svm(data_moment_recoded1024, sim = 3)
+auc_entrogpt = model_svm(data_gpt1536_entropy, sim = 3)
+auc_entrobert = model_svm(data_bert768_entropy, sim = 3)
+auc_entrocohere = model_svm(data_cohere1024_entropy, sim = 3)
+
+auc_table = data.frame(Model = c("EntroGPT1536", "EntroBERT768", "EntroCohere1024", "MOMENT1024", "MOMENT1024_raw", "MOMENT1024_raw_recoded"),
+                       AUC = c(mean(auc_entrogpt$auc), 
+                               mean(auc_entrobert$auc),
+                               mean(auc_entrocohere$auc), 
+                               mean(auc_moment$auc), 
+                               mean(auc_moment_raw$auc),
+                               mean(auc_moment_recoded$auc)), 
+                       Accuracy = c(mean(auc_entrogpt$accuracy), 
+                               mean(auc_entrobert$accuracy),
+                               mean(auc_entrocohere$accuracy), 
+                               mean(auc_moment$accuracy), 
+                               mean(auc_moment_raw$accuracy), 
+                               mean(auc_moment_recoded$accuracy)))
+  
+auc_table
+```
+
