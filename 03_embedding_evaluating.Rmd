@@ -305,7 +305,7 @@ data_moment_recoded1024 = rbind(data_moment_recoded1_1024, data_moment_recoded2_
 ## SVM of Evaluation 
 
 ### 1. MOMENT 
-```{r eval=FALSE}
+```{r EntroGPT}
 set.seed(1)
 data_gpt1536_entropy$bmi = factor(data_gpt1536_entropy$bmi, levels = c("0", "1"), labels = c("class0", "class1"))
 
