@@ -14,18 +14,18 @@ library(haven)
 ### 2003-2004 data
 ```{r data_0304}
 # Import data from NHANES for 2003-2004
-bmx_d1 = read_xpt("data/BMX_C.xpt") |>
+bmx_d1 = read_xpt("001_raw_data/BMX_C.xpt") |>
   janitor::clean_names() |>
   drop_na(bmxbmi) |>
   select(seqn, bmxbmi)
 
-demo_d1 = read_xpt("data/DEMO_C.xpt") |>
+demo_d1 = read_xpt("001_raw_data/DEMO_C.xpt") |>
   janitor::clean_names() |>
   filter(ridageyr >= 20 & ridageyr < 85 & dmdmartl != 77 & dmdmartl != 99 & ridexprg %in% c(2,3,NA) & dmdeduc2 != 7 & dmdeduc2 != 9) |>
   select(seqn, riagendr, ridageyr, ridreth1, dmdeduc2, dmdmartl, indfmpir) |>
   drop_na()
 
-paxraw_d1 = read_xpt("data/paxraw_c.xpt") |>
+paxraw_d1 = read_xpt("001_raw_data/paxraw_c.xpt") |>
   janitor::clean_names() |>
   filter(paxstat == 1 & paxcal == 1) |>  
   drop_na(paxinten) |>
@@ -35,18 +35,18 @@ paxraw_d1 = read_xpt("data/paxraw_c.xpt") |>
 ### 2005-2006 data
 ```{r data_0506}
 # Import data from NHANES for 2005-2006 
-bmx_d2 = read_xpt("data/BMX_D.xpt") |>
+bmx_d2 = read_xpt("001_raw_data/BMX_D.xpt") |>
   janitor::clean_names() |>
   drop_na(bmxbmi) |>
   select(seqn, bmxbmi)
 
-demo_d2 = read_xpt("data/DEMO_D.xpt") |>
+demo_d2 = read_xpt("001_raw_data/DEMO_D.xpt") |>
   janitor::clean_names() |>
   filter(ridageyr >= 20 & ridageyr < 85 & dmdmartl != 77 & dmdmartl != 99 & ridexprg %in% c(2,3,NA) & dmdeduc2 != 7 & dmdeduc2 != 9) |>
   select(seqn, riagendr, ridageyr, ridreth1, dmdeduc2, dmdmartl, indfmpir) |>
   drop_na()
 
-paxraw_d2 = read_xpt("data/paxraw_d.xpt", col_select = c("SEQN", "PAXN", "PAXINTEN", "PAXSTAT", "PAXCAL")) |> # only select required columns due to memory limit issue
+paxraw_d2 = read_xpt("001_raw_data/paxraw_d.xpt", col_select = c("SEQN", "PAXN", "PAXINTEN", "PAXSTAT", "PAXCAL")) |> # only select required columns due to memory limit issue
   janitor::clean_names() |>
   filter(paxstat == 1 & paxcal == 1) |>  
   drop_na(paxinten) |>
@@ -73,7 +73,6 @@ data1 = paxraw_d1 |>
 data1 |>
   group_by(seqn) |>
   summarize()
-
 
 missing2 = paxraw_d2 |>
   group_by(seqn) |> 
@@ -130,8 +129,8 @@ data_wide = data_total |>
     values_from = pa, 
     names_prefix = "time")
 
-save(data_wide, file = "data/data_wide.RData")
-write.csv(data_wide, file = "data/data_wide.csv")       
+save(data_wide, file = "002_data/data_wide.RData")
+write.csv(data_wide, file = "002_data/data_wide.csv")       
 ```
 
 ### 03. cleaning into 20 minute interval data 
@@ -176,8 +175,8 @@ data_wide_20 = data_total_20 |>
     values_from = pa, 
     names_prefix = "time")
 
-save(data_wide_20, file = "data/data_wide_20.RData")
-write.csv(data_wide_20, file = "data/data_wide_20.csv")    
+save(data_wide_20, file = "002_data/data_wide_20.RData")
+write.csv(data_wide_20, file = "002_data/data_wide_20.csv")    
 ```
 
 ### 04. save the raw data for MOMENT 
@@ -217,11 +216,11 @@ raw_data_recoded = raw_data_full |>
         )
 
 
-save(raw_data_full, file = "data/raw_data_full.RData")
-write.csv(raw_data_full, file = "data/raw_data_full.csv") 
+save(raw_data_full, file = "002_data/raw_data_full.RData")
+write.csv(raw_data_full, file = "002_data/raw_data_full.csv") 
 
-save(raw_data_recoded, file = "data/raw_data_recoded.RData")
-write.csv(raw_data_recoded, file = "data/raw_data_recoded.csv") 
+save(raw_data_recoded, file = "002_data/raw_data_recoded.RData")
+write.csv(raw_data_recoded, file = "002_data/raw_data_recoded.csv") 
 ```
 
 
